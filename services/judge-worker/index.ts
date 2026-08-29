@@ -58,17 +58,19 @@ const worker = new Worker(QUEUE, async (job) => {
       update: { passed, points: award },
     });
     if (statusId === 6) failedHard = "COMPILE_ERROR";
-    if (statusId === 5) failedHard = failedHard ?? "TIME_LIMIT";
-    if (statusId === 13) failedHard = failedHard ?? "UNAVAILABLE";
+    else if (statusId === 5) failedHard = failedHard ?? "TIME_LIMIT";
+    else if (statusId >= 7 && statusId <= 12) failedHard = failedHard ?? "RUNTIME_ERROR";
+    else if (statusId >= 13) failedHard = failedHard ?? "UNAVAILABLE";
   }
 
   const total = problem.tests.reduce((s, t) => s + t.points, 0);
   let status: SubmissionStatus = "WRONG_ANSWER";
   if (failedHard === "COMPILE_ERROR") status = "COMPILE_ERROR";
+  else if (failedHard === "TIME_LIMIT") status = "TIME_LIMIT";
+  else if (failedHard === "RUNTIME_ERROR") status = "RUNTIME_ERROR";
   else if (failedHard === "UNAVAILABLE") status = "UNAVAILABLE";
   else if (points === total && total > 0) status = "ACCEPTED";
   else if (points > 0) status = "PARTIAL";
-  else if (failedHard) status = failedHard;
 
   await prisma.codingSubmission.update({ where: { id: sub.id }, data: { status, pointsAwarded: points, compileOutput: compile.slice(0, 4000), judgedAt: new Date() } });
 
