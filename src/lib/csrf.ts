@@ -4,16 +4,38 @@ import { safeEqual } from "./crypto";
 
 const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
 
-export function originAllowed(origin: string | null): boolean {
+export function originAllowed(origin: string | null, requestUrl?: string): boolean {
   if (!origin) return false;
-  return allowedOrigins().some((allowed) => allowed === origin);
+  if (requestUrl) {
+    try {
+      if (origin === new URL(requestUrl).origin) return true;
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    return allowedOrigins().some((allowed) => allowed === origin);
+  } catch {
+    return false;
+  }
 }
 
 export function assertCsrf(req: Request): void {
   if (SAFE.has(req.method.toUpperCase())) return;
   const origin = req.headers.get("origin");
   const referer = req.headers.get("referer");
-  const allowed = originAllowed(origin) || (referer ? allowedOrigins().some((a) => referer.startsWith(a)) : false);
+  const requestOrigin = (() => {
+    try {
+      return new URL(req.url).origin;
+    } catch {
+      return "";
+    }
+  })();
+  const sameOrigin = Boolean(origin && requestOrigin && origin === requestOrigin);
+  const allowed =
+    sameOrigin ||
+    originAllowed(origin, req.url) ||
+    (referer ? allowedOrigins().some((a) => referer.startsWith(a)) || referer.startsWith(requestOrigin) : false);
   if (!allowed) {
     const err = new Error("CSRF_ORIGIN");
     (err as Error & { status: number }).status = 403;

@@ -24,8 +24,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${sans.variable} ${mono.variable}`}>
       <body>
-        <CsrfBoot />
-        {children}
+        <CsrfBoot>{children}</CsrfBoot>
       </body>
     </html>
   );

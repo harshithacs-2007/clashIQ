@@ -10,6 +10,16 @@ export async function hashPassword(password: string): Promise<string> {
   });
 }
 
+let timingDummyHash: string | null = null;
+
+/** Argon2id hash used only so missing accounts take a similar verify path. */
+export async function dummyPasswordHash(): Promise<string> {
+  if (!timingDummyHash) {
+    timingDummyHash = await hashPassword("clashiq-timing-guard");
+  }
+  return timingDummyHash;
+}
+
 export async function verifyPassword(hashValue: string, password: string): Promise<boolean> {
   try {
     return await verify(hashValue, password);

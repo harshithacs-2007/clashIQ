@@ -46,3 +46,19 @@ export async function POST(req: Request) {
     return jsonError(e);
   }
 }
+
+export async function DELETE(req: Request) {
+  try {
+    const user = await requireUser(req);
+    await guardMutating(req, `team-leave:${user.id}`, 20, 60);
+    const roomId = new URL(req.url).searchParams.get("roomId");
+    if (!roomId) throw new HttpError(400, "roomId is required.");
+    const member = await prisma.teamMember.findFirst({ where: { userId: user.id, team: { roomId } } });
+    if (!member) throw new HttpError(404, "Not on a team in this room.");
+    await prisma.teamMember.delete({ where: { id: member.id } });
+    await emitRoom(roomId, RealtimeEvent.TEAM_UPDATED, { teamId: member.teamId });
+    return jsonOk({ ok: true });
+  } catch (e) {
+    return jsonError(e);
+  }
+}

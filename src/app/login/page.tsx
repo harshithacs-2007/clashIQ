@@ -1,13 +1,20 @@
 "use client";
 
-import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
+import { FormEvent, Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Brand } from "@/components/Brand";
 import { api } from "@/lib/api-client";
 
-export default function LoginPage() {
+function safeNext(raw: string | null, role: string) {
+  if (role === "HOST") return "/host";
+  if (raw && raw.startsWith("/") && !raw.startsWith("//") && !raw.startsWith("/host")) return raw;
+  return "/home";
+}
+
+function LoginForm() {
   const router = useRouter();
+  const search = useSearchParams();
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
@@ -24,7 +31,7 @@ export default function LoginPage() {
           password: fd.get("password"),
         }),
       });
-      router.push(res.user.role === "HOST" ? "/host" : "/join");
+      router.push(safeNext(search.get("next"), res.user.role));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign-in failed.");
     } finally {
@@ -48,12 +55,20 @@ export default function LoginPage() {
         </label>
         {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
         <button disabled={pending} className="w-full bg-[var(--lime)] py-3 font-semibold text-black">
-          {pending ? "Checking…" : "Enter"}
+          {pending ? "Signing in..." : "Enter"}
         </button>
       </form>
       <p className="mt-4 text-sm text-[var(--mute)]">
         New here? <Link className="text-[var(--lime)]" href="/signup">Create an account</Link>
       </p>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<main className="p-8">Loading…</main>}>
+      <LoginForm />
+    </Suspense>
   );
 }

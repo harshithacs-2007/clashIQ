@@ -16,8 +16,17 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (method !== "GET" && method !== "HEAD") {
     headers.set("x-csrf-token", csrf());
   }
-  const res = await fetch(path, { ...init, headers, credentials: "include" });
-  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  let res = await fetch(path, { ...init, headers, credentials: "include" });
+  let data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok && data.error === "This request could not be verified.") {
+    await fetch("/api/auth/me", { credentials: "include" });
+    const retryHeaders = new Headers(headers);
+    if (method !== "GET" && method !== "HEAD") {
+      retryHeaders.set("x-csrf-token", csrf());
+    }
+    res = await fetch(path, { ...init, headers: retryHeaders, credentials: "include" });
+    data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  }
   if (!res.ok) {
     throw new Error(data.error || "Request failed.");
   }

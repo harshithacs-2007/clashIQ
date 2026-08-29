@@ -4,6 +4,7 @@ import { getUserBySessionToken, type AuthUser, requireRole } from "./auth";
 import { assertCsrf } from "./csrf";
 import { rateLimit } from "./rate-limit";
 import { HttpError } from "./http";
+import { assertDatabaseConfigured } from "./db";
 import type { Role } from "@prisma/client";
 
 export async function parseJson<T>(req: Request): Promise<T> {
@@ -15,6 +16,7 @@ export async function parseJson<T>(req: Request): Promise<T> {
 }
 
 export async function requireUser(req: Request): Promise<AuthUser> {
+  assertDatabaseConfigured();
   const token = parseCookieHeader(req)[SESSION_COOKIE] ?? (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) throw new HttpError(401, "Sign in to continue.");
   const user = await getUserBySessionToken(token);

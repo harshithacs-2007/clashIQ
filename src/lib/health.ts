@@ -1,7 +1,6 @@
 import "server-only";
 import { prisma } from "./db";
 import { getRedis } from "./redis";
-import { getEnv } from "./env";
 import type { HealthState } from "@prisma/client";
 
 export type HealthReport = {
@@ -30,17 +29,23 @@ export async function collectHealth(): Promise<HealthReport> {
   }
 
   try {
-    const pong = await getRedis().ping();
-    report.REALTIME = pong === "PONG" ? "HEALTHY" : "DEGRADED";
+    const redis = getRedis();
+    if (!redis) {
+      report.REALTIME = "OFFLINE";
+    } else {
+      if (redis.status === "wait") await redis.connect();
+      const pong = await redis.ping();
+      report.REALTIME = pong === "PONG" ? "HEALTHY" : "DEGRADED";
+    }
   } catch {
     report.REALTIME = "OFFLINE";
     report.APPLICATION = "DEGRADED";
   }
 
-  const env = getEnv();
-  if (env.JUDGE0_URL) {
+  const judgeUrl = process.env.JUDGE0_URL?.trim();
+  if (judgeUrl) {
     try {
-      const res = await fetch(`${env.JUDGE0_URL}/about`, { signal: AbortSignal.timeout(2500) });
+      const res = await fetch(`${judgeUrl}/about`, { signal: AbortSignal.timeout(2500) });
       report.CODE_JUDGE = res.ok ? "HEALTHY" : "DEGRADED";
     } catch {
       report.CODE_JUDGE = "DEGRADED";
@@ -49,7 +54,7 @@ export async function collectHealth(): Promise<HealthReport> {
     report.CODE_JUDGE = "DEGRADED";
   }
 
-  if (env.LIVEKIT_URL && env.LIVEKIT_API_KEY) {
+  if (process.env.LIVEKIT_URL?.trim() && process.env.LIVEKIT_API_KEY?.trim()) {
     report.PROCTORING = "HEALTHY";
   } else {
     report.PROCTORING = "DEGRADED";

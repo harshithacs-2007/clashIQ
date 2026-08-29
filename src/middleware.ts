@@ -1,18 +1,26 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE } from "@/lib/constants";
 
-function allowedOrigin(origin: string | null): string | null {
+function allowedOrigin(origin: string | null, requestUrl: string): string | null {
+  if (!origin) return null;
+  try {
+    if (origin === new URL(requestUrl).origin) return origin;
+  } catch {
+    /* ignore */
+  }
   const app = process.env.APP_URL;
+  const publicApp = process.env.NEXT_PUBLIC_APP_URL;
+  const vercel = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.replace(/^https?:\/\//, "")}` : "";
   const extra = (process.env.CORS_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-  const allow = [app, ...extra].filter(Boolean) as string[];
-  if (origin && allow.includes(origin)) return origin;
+  const allow = [app, publicApp, vercel, ...extra].filter(Boolean) as string[];
+  if (allow.includes(origin)) return origin;
   return null;
 }
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
   const origin = request.headers.get("origin");
-  const allow = allowedOrigin(origin);
+  const allow = allowedOrigin(origin, request.url);
 
   if (request.method === "OPTIONS") {
     const res = new NextResponse(null, { status: 204 });
@@ -33,6 +41,14 @@ export function middleware(request: NextRequest) {
     }
   }
 
+  const participantProtected =
+    pathname === "/home" || pathname.startsWith("/home/") || pathname.startsWith("/play/") || pathname === "/join" || pathname.startsWith("/join/");
+  if (participantProtected && !request.cookies.get(SESSION_COOKIE)?.value) {
+    const login = new URL("/login", request.url);
+    login.searchParams.set("next", pathname);
+    return NextResponse.redirect(login);
+  }
+
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-clashiq-path", pathname);
   const res = NextResponse.next({ request: { headers: requestHeaders } });
@@ -46,5 +62,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/host", "/host/:path*", "/api/:path*"],
+  matcher: ["/host", "/host/:path*", "/home", "/home/:path*", "/join", "/join/:path*", "/play/:path*", "/api/:path*"],
 };

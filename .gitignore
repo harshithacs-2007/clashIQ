@@ -8,6 +8,7 @@ coverage
 .env.development
 .env.production
 .env.*.local
+!.env.example
 *.pem
 *.p12
 credentials.json
@@ -22,3 +23,5 @@ prisma/*.db-journal
 tsconfig.tsbuildinfo
 load-results.json
 .env*
+!.env.example
+

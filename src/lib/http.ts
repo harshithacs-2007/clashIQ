@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { ZodError } from "zod";
 import { log } from "./logger";
+import { isDatabaseUnavailable } from "./database-errors";
 
 export class HttpError extends Error {
   constructor(
@@ -14,6 +16,13 @@ export class HttpError extends Error {
 export function jsonError(error: unknown) {
   if (error instanceof HttpError) {
     return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+  }
+  if (error instanceof ZodError) {
+    return NextResponse.json({ error: "Check your input and try again." }, { status: 400 });
+  }
+  if (isDatabaseUnavailable(error)) {
+    log.error("database_unavailable", { err: error instanceof Error ? error.message : "unknown" });
+    return NextResponse.json({ error: "Database is unavailable." }, { status: 503 });
   }
   const status = typeof error === "object" && error && "status" in error ? Number((error as { status: number }).status) : 500;
   const message =

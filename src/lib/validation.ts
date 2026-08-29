@@ -1,14 +1,19 @@
 import { z } from "zod";
 import { AVATAR_STYLES } from "./constants";
 
+const loginEmail = z.preprocess(
+  (v) => (typeof v === "string" ? v.trim().toLowerCase() : v),
+  z.string().email().max(200),
+);
+
 export const signupSchema = z.object({
-  email: z.string().email().max(200).transform((s) => s.toLowerCase().trim()),
+  email: loginEmail,
   password: z.string().min(10).max(200),
   displayName: z.string().min(2).max(40).trim(),
 });
 
 export const loginSchema = z.object({
-  email: z.string().email().max(200).transform((s) => s.toLowerCase().trim()),
+  email: loginEmail,
   password: z.string().min(1).max(200),
 });
 
@@ -36,7 +41,7 @@ export const eventSchema = z.object({
 
 export const roomSchema = z.object({
   name: z.string().min(2).max(80).trim(),
-  teamSize: z.number().int().min(1).max(6).default(2),
+  teamSize: z.number().int().min(2).max(3).default(2),
 });
 
 export const activitySchema = z.object({

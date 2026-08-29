@@ -16,6 +16,7 @@ export async function GET(req: Request) {
     if (!isHost && !member) throw new HttpError(403, "Not authorized for this room stream.");
 
     const env = getEnv();
+    if (!env.REALTIME_SHARED_SECRET) throw new HttpError(503, "Realtime is not configured.");
     const exp = Math.floor(Date.now() / 1000) + 60 * 10;
     const payload = JSON.stringify({
       sub: user.id,

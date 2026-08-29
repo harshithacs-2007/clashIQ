@@ -1,6 +1,6 @@
-import { prisma } from "@/lib/db";
+import { prisma, assertDatabaseConfigured } from "@/lib/db";
 import { loginSchema } from "@/lib/validation";
-import { verifyPassword } from "@/lib/crypto";
+import { verifyPassword, dummyPasswordHash } from "@/lib/crypto";
 import { createSession } from "@/lib/auth";
 import { guardMutating, parseJson, clientIp } from "@/lib/request";
 import { jsonError, jsonOk, HttpError } from "@/lib/http";
@@ -10,6 +10,7 @@ import { audit } from "@/lib/realtime";
 export async function POST(req: Request) {
   try {
     const ip = clientIp(req);
+    assertDatabaseConfigured();
     await guardMutating(req, `login:${ip}`, 12, 300);
     const body = loginSchema.parse(await parseJson(req));
 
@@ -20,11 +21,12 @@ export async function POST(req: Request) {
     if (fails >= 12) throw new HttpError(429, "Too many failed sign-ins. Try again later.");
 
     const user = await prisma.user.findUnique({ where: { email: body.email } });
-    const ok = user ? await verifyPassword(user.passwordHash, body.password) : false;
+    // Always verify against a hash so unknown emails do not take a faster path.
+    const ok = await verifyPassword(user?.passwordHash ?? (await dummyPasswordHash()), body.password);
     await prisma.loginAttempt.create({
-      data: { email: body.email, ip, success: ok, userId: user?.id },
+      data: { email: body.email, ip, success: Boolean(user && ok), userId: user?.id },
     });
-    if (!user || !ok) throw new HttpError(401, "Email or password is incorrect.");
+    if (!user || !ok) throw new HttpError(401, "Invalid email or password.");
 
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     const session = await createSession(user.id, { ip, userAgent: req.headers.get("user-agent") ?? undefined });

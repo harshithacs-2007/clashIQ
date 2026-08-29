@@ -1,14 +1,28 @@
 import { z } from "zod";
 
+function nonempty(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  return t.length > 0 ? t : undefined;
+}
+
+function resolveAppUrl(): string {
+  const configured = nonempty(process.env.APP_URL) ?? nonempty(process.env.NEXT_PUBLIC_APP_URL);
+  if (configured && /^https?:\/\//i.test(configured)) return configured.replace(/\/$/, "");
+  const vercel = nonempty(process.env.VERCEL_URL);
+  if (vercel) return `https://${vercel.replace(/^https?:\/\//, "")}`;
+  return "http://localhost:3000";
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   APP_ENV: z.enum(["development", "preview", "production"]).default("development"),
   APP_URL: z.string().url(),
-  DATABASE_URL: z.string().min(1),
-  REDIS_URL: z.string().min(1),
-  SESSION_SECRET: z.string().min(32),
+  DATABASE_URL: z.string().optional(),
+  REDIS_URL: z.string().optional(),
+  SESSION_SECRET: z.string().min(32).optional(),
   REALTIME_URL: z.string().optional(),
-  REALTIME_SHARED_SECRET: z.string().min(16),
+  REALTIME_SHARED_SECRET: z.string().min(16).optional(),
   JUDGE0_URL: z.string().optional(),
   JUDGE0_AUTH_TOKEN: z.string().optional(),
   JUDGE_QUEUE_NAME: z.string().default("clashiq-judge"),
@@ -31,7 +45,14 @@ let cached: AppEnv | null = null;
 
 export function getEnv(): AppEnv {
   if (cached) return cached;
-  const parsed = envSchema.safeParse(process.env);
+  const parsed = envSchema.safeParse({
+    ...process.env,
+    APP_URL: resolveAppUrl(),
+    REDIS_URL: nonempty(process.env.REDIS_URL),
+    DATABASE_URL: nonempty(process.env.DATABASE_URL),
+    SESSION_SECRET: nonempty(process.env.SESSION_SECRET),
+    REALTIME_SHARED_SECRET: nonempty(process.env.REALTIME_SHARED_SECRET),
+  });
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
     throw new Error(`Invalid environment: ${issues}`);
@@ -43,9 +64,12 @@ export function getEnv(): AppEnv {
 export function allowedOrigins(): string[] {
   const env = getEnv();
   const extra = env.CORS_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean) ?? [];
-  return [env.APP_URL, ...extra];
+  const vercel = nonempty(process.env.VERCEL_URL);
+  const fromVercel = vercel ? [`https://${vercel.replace(/^https?:\/\//, "")}`] : [];
+  return [...new Set([env.APP_URL, nonempty(process.env.NEXT_PUBLIC_APP_URL), ...fromVercel, ...extra].filter(Boolean) as string[])];
 }
 
 export function isSecureCookie(): boolean {
+  if (process.env.VERCEL) return true;
   return getEnv().APP_ENV !== "development";
 }

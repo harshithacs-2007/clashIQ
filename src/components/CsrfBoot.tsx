@@ -1,10 +1,16 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
-export function CsrfBoot() {
+export function CsrfBoot({ children }: { children: ReactNode }) {
+  const [ready, setReady] = useState(false);
+
   useEffect(() => {
-    void fetch("/api/auth/me", { credentials: "include" });
+    void fetch("/api/auth/me", { credentials: "include" }).finally(() => setReady(true));
   }, []);
-  return null;
+
+  if (!ready) {
+    return <div className="p-8 text-sm text-[var(--mute)]">Connecting…</div>;
+  }
+  return <>{children}</>;
 }

@@ -25,7 +25,7 @@ export default function SignupPage() {
           displayName: fd.get("displayName"),
         }),
       });
-      router.push("/join");
+      router.push("/home");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create account.");
     } finally {
@@ -52,7 +52,7 @@ export default function SignupPage() {
         </label>
         {error && <p className="text-sm text-[var(--danger)]">{error}</p>}
         <button disabled={pending} className="w-full bg-[var(--lime)] py-3 font-semibold text-black">
-          {pending ? "Creating…" : "Join clashIQ"}
+          {pending ? "Creating account..." : "Join clashIQ"}
         </button>
       </form>
       <p className="mt-4 text-sm text-[var(--mute)]">

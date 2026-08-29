@@ -1,6 +1,6 @@
 type Level = "info" | "warn" | "error";
 
-const REDACT = ["password", "token", "secret", "authorization", "cookie", "session"];
+const REDACT = ["password", "token", "secret", "authorization", "cookie", "session", "email"];
 
 function sanitize(value: unknown): unknown {
   if (value && typeof value === "object") {
