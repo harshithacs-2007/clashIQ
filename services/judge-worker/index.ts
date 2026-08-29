@@ -32,6 +32,7 @@ function normalize(s: string) { return s.replace(/\r\n/g, "\n").trimEnd(); }
 
 const worker = new Worker(QUEUE, async (job) => {
   const submissionId = job.data.submissionId as string;
+  const runOnly = job.data.runOnly === true;
   const sub = await prisma.codingSubmission.findUnique({
     where: { id: submissionId },
     include: { activity: { include: { codingProblem: { include: { tests: { orderBy: { sortOrder: "asc" } } } } } }, user: { include: { memberships: true } } },
@@ -72,47 +73,28 @@ const worker = new Worker(QUEUE, async (job) => {
   else if (points === total && total > 0) status = "ACCEPTED";
   else if (points > 0) status = "PARTIAL";
 
-  await prisma.codingSubmission.update({ where: { id: sub.id }, data: { status, pointsAwarded: points, compileOutput: compile.slice(0, 4000), judgedAt: new Date() } });
+  await prisma.codingSubmission.update({ where: { id: sub.id }, data: { status, pointsAwarded: runOnly ? 0 : points, compileOutput: compile.slice(0, 4000), judgedAt: new Date() } });
 
-  if (points > 0) {
+  if (!runOnly && points > 0) {
     const member = await prisma.teamMember.findFirst({ where: { userId: sub.userId, team: { roomId: sub.activity.roomId } } });
     if (member) {
       const idempotencyKey = `score:code:${sub.id}`;
       await prisma.$transaction(async (tx) => {
-        // PostgreSQL advisory transaction lock serializes concurrent submissions for
-        // the same participant/activity while leaving unrelated submissions concurrent.
         await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`${sub.activityId}:${sub.userId}`}))`;
-
         const existing = await tx.scoreTransaction.findUnique({ where: { idempotencyKey } });
         if (existing) return;
-
-        const best = await tx.codingSubmission.aggregate({
-          where: {
-            activityId: sub.activityId,
-            userId: sub.userId,
-            id: { not: sub.id },
-            status: { in: ["ACCEPTED", "PARTIAL"] },
-          },
-          _max: { pointsAwarded: true },
-        });
+        const best = await tx.codingSubmission.aggregate({ where: { activityId: sub.activityId, userId: sub.userId, id: { not: sub.id }, status: { in: ["ACCEPTED", "PARTIAL"] } }, _max: { pointsAwarded: true } });
         const previousBest = best._max.pointsAwarded ?? 0;
         const delta = Math.max(0, points - previousBest);
         if (delta === 0) return;
-
-        await tx.scoreTransaction.create({
-          data: { roomId: sub.activity.roomId, teamId: member.teamId, delta, reason: "CODING_RESULT", refType: "coding_submission", refId: sub.id, actorUserId: sub.userId, idempotencyKey },
-        });
-        await tx.leaderboardEntry.upsert({
-          where: { roomId_teamId: { roomId: sub.activity.roomId, teamId: member.teamId } },
-          create: { roomId: sub.activity.roomId, teamId: member.teamId, score: delta },
-          update: { score: { increment: delta } },
-        });
+        await tx.scoreTransaction.create({ data: { roomId: sub.activity.roomId, teamId: member.teamId, delta, reason: "CODING_RESULT", refType: "coding_submission", refId: sub.id, actorUserId: sub.userId, idempotencyKey } });
+        await tx.leaderboardEntry.upsert({ where: { roomId_teamId: { roomId: sub.activity.roomId, teamId: member.teamId } }, create: { roomId: sub.activity.roomId, teamId: member.teamId, score: delta }, update: { score: { increment: delta } } });
       });
     }
   }
 
   const redisPub = new Redis(REDIS_URL);
-  await redisPub.publish(`room:${sub.activity.roomId}`, JSON.stringify({ event: "SUBMISSION_RESULT", roomId: sub.activity.roomId, at: new Date().toISOString(), data: { submissionId: sub.id, userId: sub.userId, status, pointsAwarded: points } }));
+  await redisPub.publish(`room:${sub.activity.roomId}`, JSON.stringify({ event: "SUBMISSION_RESULT", roomId: sub.activity.roomId, at: new Date().toISOString(), data: { submissionId: sub.id, userId: sub.userId, status, pointsAwarded: runOnly ? 0 : points, runOnly } }));
   await redisPub.quit();
 }, { connection, concurrency: 4 });
 
