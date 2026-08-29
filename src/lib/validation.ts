@@ -48,4 +48,20 @@ export const activitySchema = z.object({
   type: z.enum(["QUIZ", "CODING", "CHALLENGE"]),
   title: z.string().min(2).max(80).trim(),
   durationMs: z.number().int().min(5000).max(1000 * 60 * 180).default(60000),
+  instructions: z.string().max(4000).default(""),
+});
+
+export const quizOptionSchema = z.object({
+  label: z.string().min(1).max(400),
+  isCorrect: z.boolean(),
+});
+
+export const quizQuestionSchema = z.object({
+  activityId: z.string().min(1),
+  prompt: z.string().min(1).max(2000),
+  explanation: z.string().max(2000).default(""),
+  points: z.number().int().min(1).max(10000).default(100),
+  timeLimitMs: z.number().int().min(3000).max(300000).default(20000),
+  imageId: z.string().optional(),
+  options: z.array(quizOptionSchema).min(2).max(8),
 });

@@ -232,6 +232,7 @@ model Team {
   freezeUntil DateTime?
   shieldUntil DateTime?
   doubleUntil DateTime?
+  quizSubmissions QuizSubmission[]
 
   @@unique([roomId, name])
   @@index([roomId])
@@ -277,10 +278,11 @@ model Activity {
 }
 
 model Quiz {
-  id         String @id @default(cuid())
-  activityId String @unique
-  activity   Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
-  questions  QuizQuestion[]
+  id           String @id @default(cuid())
+  activityId   String @unique
+  instructions String @default("")
+  activity     Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  questions    QuizQuestion[]
 }
 
 model QuizQuestion {
@@ -320,6 +322,7 @@ model QuizSubmission {
   activityId  String
   questionId  String
   userId      String
+  teamId      String
   optionId    String
   correct     Boolean
   pointsAwarded Int    @default(0)
@@ -329,9 +332,11 @@ model QuizSubmission {
   activity Activity    @relation(fields: [activityId], references: [id], onDelete: Cascade)
   question QuizQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
   user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team     Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
   option   QuizOption  @relation(fields: [optionId], references: [id], onDelete: Restrict)
 
   @@unique([questionId, userId])
+  @@unique([questionId, teamId])
   @@unique([idempotencyKey])
   @@index([activityId])
 }

@@ -19,7 +19,7 @@ type State = {
   teams: { id: string; name: string; avatarSeed: string }[];
   activities: { id: string; type: string; title: string; status: string; remainingMs: number; endsAt: string | null }[];
   currentActivityId: string | null;
-  question: { id: string; prompt: string; points: number; options: { id: string; label: string }[] } | null;
+  question: { id: string; prompt: string; points: number; imageId?: string | null; options: { id: string; label: string }[] } | null;
   coding: {
     description: string;
     constraints: string;
@@ -27,8 +27,10 @@ type State = {
     allowedLanguages: number[];
     publicTests: { id: string; input: string; expected: string; points: number }[];
   } | null;
-  leaderboard: { rank: number; teamId: string; name: string; score: number; avatarSeed: string }[];
+  leaderboard: { rank: number; teamId: string; name: string; score: number; avatarSeed: string; avatars?: { displayName: string }[] }[];
   shop: { id: string; cardType: string; cost: number; inventory: number }[];
+  instructions?: string | null;
+  mySubmission?: { optionId: string; questionId: string } | null;
 };
 
 const LANGS: Record<number, string> = { 71: "python", 63: "javascript", 62: "java" };
@@ -39,6 +41,7 @@ export default function PlayPage() {
   const [state, setState] = useState<State | null>(null);
   const [loadError, setLoadError] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
+  const [fetchedAt, setFetchedAt] = useState(Date.now());
   const [feedback, setFeedback] = useState<string>("");
   const [source, setSource] = useState("print('ok')");
   const [lang, setLang] = useState(71);
@@ -49,7 +52,9 @@ export default function PlayPage() {
     try {
       const s = await api<State>(`/api/rooms/state?roomId=${roomId}`);
       setState(s);
+      setFetchedAt(Date.now());
       setLoadError("");
+      if (s.mySubmission?.optionId) setPicked(s.mySubmission.optionId);
       if (s.coding?.starterCode?.[String(lang)]) setSource(s.coding.starterCode[String(lang)]!);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Could not load room.");
@@ -66,9 +71,12 @@ export default function PlayPage() {
 
   const current = state?.activities.find((a) => a.id === state.currentActivityId);
   const remaining = useMemo(() => {
-    if (!current?.endsAt) return current?.remainingMs ?? 0;
-    return Math.max(0, new Date(current.endsAt).getTime() - now);
-  }, [current, now]);
+    if (!current) return 0;
+    if (current.status === "PAUSED" || current.status === "LOCKED" || current.status === "ENDED") {
+      return current.remainingMs;
+    }
+    return Math.max(0, current.remainingMs - (now - fetchedAt));
+  }, [current, now, fetchedAt]);
 
   async function submitQuiz(optionId: string) {
     if (!current || !state?.question) return;
@@ -164,14 +172,26 @@ export default function PlayPage() {
           <div className="mono text-4xl tabular-nums text-[var(--lime)]">{Math.ceil(remaining / 1000)}s</div>
         </div>
 
-        {current?.type === "QUIZ" && state.question && (
+        {current?.type === "QUIZ" && !state.question && (
+          <p className="mt-8 text-[var(--mute)]">
+            {current.status === "ENDED" || remaining <= 0 ? "Round complete. Scores are on the board." : "Waiting for the host to start this quiz."}
+          </p>
+        )}
+        {current?.type === "QUIZ" && state.instructions && !state.question && (
+          <p className="mt-4 text-sm text-[var(--mute)]">{state.instructions}</p>
+        )}
+        {current?.type === "QUIZ" && (current.status === "ACTIVE" || current.status === "PAUSED" || current.status === "LOCKED" || current.status === "ENDED") && state.question && (
           <div className="mt-8">
+            {state.question.imageId && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img alt="" src={`/api/media/${state.question.imageId}`} className="mb-4 max-h-56" />
+            )}
             <p className="text-xl">{state.question.prompt}</p>
             <div className="mt-4 grid gap-2">
               {state.question.options.map((o) => (
                 <button
                   key={o.id}
-                  disabled={!!picked}
+                  disabled={!!picked || current.status !== "ACTIVE" || remaining <= 0}
                   onClick={() => void submitQuiz(o.id)}
                   className={`panel px-4 py-3 text-left ${picked === o.id ? "border-[var(--lime)]" : ""}`}
                 >
@@ -225,7 +245,11 @@ export default function PlayPage() {
         <ol className="mt-3 space-y-2">
           {state.leaderboard.map((row) => (
             <motion.li layout key={row.teamId} className="flex items-center justify-between text-sm">
-              <span><span className="mono mr-2 text-[var(--mute)]">{row.rank}</span>{row.name}</span>
+              <span>
+                <span className="mono mr-2 text-[var(--mute)]">{row.rank}</span>
+                {row.name}
+                {row.avatars?.length ? <span className="ml-1 text-[var(--mute)]">({row.avatars.map((a) => a.displayName).join(", ")})</span> : null}
+              </span>
               <span className="mono text-[var(--lime)]">{row.score}</span>
             </motion.li>
           ))}

@@ -28,6 +28,7 @@ const controlSchema = z.object({
     "ADD_TIME",
     "END",
     "NEXT",
+    "NEXT_QUESTION",
     "PUBLISH",
     "ACTIVATE",
   ]),
@@ -93,19 +94,45 @@ async function controlActivity(
   }
 
   if (body.action === "START" || body.action === "ACTIVATE") {
+    const quiz = await prisma.quiz.findUnique({
+      where: { activityId },
+      include: { questions: { orderBy: { sortOrder: "asc" } } },
+    });
+    if (activity.type === "QUIZ" && !quiz?.questions.length) {
+      throw new HttpError(400, "Add at least one question before starting.");
+    }
     const endsAt = computeEndsAt(now, activity.durationMs, activity.extraMs);
-    await prisma.$transaction([
-      prisma.activity.update({
+    await prisma.$transaction(async (tx) => {
+      await tx.activity.update({
         where: { id: activityId },
         data: { status: "ACTIVE", startedAt: now, pausedAt: null, endsAt },
-      }),
-      prisma.room.update({
+      });
+      await tx.room.update({
         where: { id: roomId },
         data: { status: "LIVE", currentActivityId: activityId },
-      }),
-    ]);
+      });
+      if (quiz?.questions.length) {
+        await tx.quizQuestion.updateMany({ where: { quizId: quiz.id }, data: { current: false } });
+        await tx.quizQuestion.update({ where: { id: quiz.questions[0]!.id }, data: { current: true } });
+      }
+    });
     await audit({ roomId, actorId: hostId, action: "HOST_STARTED_ACTIVITY", payload: { activityId } });
     await emitRoom(roomId, RealtimeEvent.ACTIVITY_STARTED, { activityId, endsAt: endsAt.toISOString() });
+    return;
+  }
+
+  if (body.action === "NEXT_QUESTION") {
+    const quiz = await prisma.quiz.findUnique({
+      where: { activityId },
+      include: { questions: { orderBy: { sortOrder: "asc" } } },
+    });
+    if (!quiz) throw new HttpError(400, "Not a quiz activity.");
+    const idx = quiz.questions.findIndex((q) => q.current);
+    const next = idx < 0 ? quiz.questions[0] : quiz.questions[idx + 1];
+    if (!next) throw new HttpError(400, "This is the last question.");
+    await prisma.quizQuestion.updateMany({ where: { quizId: quiz.id }, data: { current: false } });
+    await prisma.quizQuestion.update({ where: { id: next.id }, data: { current: true } });
+    await emitRoom(roomId, RealtimeEvent.QUESTION_CHANGED, { questionId: next.id });
     return;
   }
 
@@ -177,13 +204,21 @@ async function controlActivity(
       return;
     }
     const endsAt = computeEndsAt(now, next.durationMs, next.extraMs);
-    await prisma.$transaction([
-      prisma.activity.update({
+    const nextQuiz = await prisma.quiz.findUnique({
+      where: { activityId: next.id },
+      include: { questions: { orderBy: { sortOrder: "asc" } } },
+    });
+    await prisma.$transaction(async (tx) => {
+      await tx.activity.update({
         where: { id: next.id },
         data: { status: "ACTIVE", startedAt: now, endsAt },
-      }),
-      prisma.room.update({ where: { id: roomId }, data: { currentActivityId: next.id, status: "LIVE" } }),
-    ]);
+      });
+      await tx.room.update({ where: { id: roomId }, data: { currentActivityId: next.id, status: "LIVE" } });
+      if (nextQuiz?.questions[0]) {
+        await tx.quizQuestion.updateMany({ where: { quizId: nextQuiz.id }, data: { current: false } });
+        await tx.quizQuestion.update({ where: { id: nextQuiz.questions[0].id }, data: { current: true } });
+      }
+    });
     await emitRoom(roomId, RealtimeEvent.ACTIVITY_STARTED, { activityId: next.id, endsAt: endsAt.toISOString() });
   }
 }

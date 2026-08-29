@@ -27,7 +27,7 @@ export async function POST(req: Request) {
       },
     });
     if (body.type === "QUIZ") {
-      await prisma.quiz.create({ data: { activityId: activity.id } });
+      await prisma.quiz.create({ data: { activityId: activity.id, instructions: body.instructions } });
     }
     if (body.type === "CODING") {
       await prisma.codingProblem.create({
@@ -55,14 +55,34 @@ export async function PATCH(req: Request) {
       .object({
         roomId: z.string(),
         activityId: z.string(),
-        action: z.enum(["DUPLICATE", "DELETE", "REORDER"]),
+        action: z.enum(["DUPLICATE", "DELETE", "REORDER", "UPDATE"]),
         orderedIds: z.array(z.string()).optional(),
         title: z.string().min(2).max(80).trim().optional(),
+        durationMs: z.number().int().min(5000).max(1000 * 60 * 180).optional(),
+        instructions: z.string().max(4000).optional(),
       })
       .parse(await parseJson(req));
     const room = await requireHostOwnsRoom(host.id, body.roomId);
     const activity = room.activities.find((a) => a.id === body.activityId);
     if (!activity) throw new HttpError(404, "Activity not found.");
+
+    if (body.action === "UPDATE") {
+      const updated = await prisma.activity.update({
+        where: { id: activity.id },
+        data: {
+          ...(body.title ? { title: body.title } : {}),
+          ...(body.durationMs ? { durationMs: body.durationMs } : {}),
+        },
+      });
+      if (activity.type === "QUIZ" && body.instructions !== undefined) {
+        await prisma.quiz.update({
+          where: { activityId: activity.id },
+          data: { instructions: body.instructions },
+        });
+      }
+      await audit({ roomId: room.id, actorId: host.id, action: "HOST_UPDATED_ACTIVITY", payload: { activityId: activity.id } });
+      return jsonOk({ activity: updated });
+    }
 
     if (body.action === "DELETE") {
       await prisma.activity.delete({ where: { id: activity.id } });
@@ -103,7 +123,7 @@ export async function PATCH(req: Request) {
         include: { questions: { include: { options: true } } },
       });
       if (quiz) {
-        const qz = await prisma.quiz.create({ data: { activityId: copy.id } });
+        const qz = await prisma.quiz.create({ data: { activityId: copy.id, instructions: quiz.instructions } });
         for (const q of quiz.questions) {
           await prisma.quizQuestion.create({
             data: {

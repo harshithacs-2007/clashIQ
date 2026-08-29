@@ -35,4 +35,51 @@ describe("server timer", () => {
     expect(left).toBeGreaterThan(5000);
     expect(left).toBeLessThan(8000);
   });
+
+  it("returns 0 after end", () => {
+    expect(
+      remainingMs({
+        status: "ENDED",
+        durationMs: 10000,
+        startedAt: new Date(),
+        pausedAt: null,
+        extraMs: 0,
+        endsAt: new Date(Date.now() + 5000),
+      }),
+    ).toBe(0);
+  });
+
+  it("treats an expired endsAt as 0 even while active", () => {
+    const now = Date.parse("2026-01-01T00:00:10Z");
+    expect(
+      remainingMs(
+        {
+          status: "ACTIVE",
+          durationMs: 5000,
+          startedAt: new Date("2026-01-01T00:00:00Z"),
+          pausedAt: null,
+          extraMs: 0,
+          endsAt: new Date("2026-01-01T00:00:05Z"),
+        },
+        now,
+      ),
+    ).toBe(0);
+  });
+
+  it("keeps remaining time while locked until endsAt", () => {
+    const now = Date.parse("2026-01-01T00:00:03Z");
+    expect(
+      remainingMs(
+        {
+          status: "LOCKED",
+          durationMs: 10000,
+          startedAt: new Date("2026-01-01T00:00:00Z"),
+          pausedAt: null,
+          extraMs: 0,
+          endsAt: new Date("2026-01-01T00:00:10Z"),
+        },
+        now,
+      ),
+    ).toBe(7000);
+  });
 });

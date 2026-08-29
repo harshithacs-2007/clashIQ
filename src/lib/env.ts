@@ -32,6 +32,7 @@ const envSchema = z.object({
   S3_ACCESS_KEY: z.string().optional(),
   S3_SECRET_KEY: z.string().optional(),
   S3_FORCE_PATH_STYLE: z.string().optional(),
+  BLOB_READ_WRITE_TOKEN: z.string().optional(),
   LIVEKIT_URL: z.string().optional(),
   LIVEKIT_API_KEY: z.string().optional(),
   LIVEKIT_API_SECRET: z.string().optional(),
@@ -52,6 +53,7 @@ export function getEnv(): AppEnv {
     DATABASE_URL: nonempty(process.env.DATABASE_URL),
     SESSION_SECRET: nonempty(process.env.SESSION_SECRET),
     REALTIME_SHARED_SECRET: nonempty(process.env.REALTIME_SHARED_SECRET),
+    BLOB_READ_WRITE_TOKEN: nonempty(process.env.BLOB_READ_WRITE_TOKEN),
   });
   if (!parsed.success) {
     const issues = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");

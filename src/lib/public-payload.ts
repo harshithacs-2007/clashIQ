@@ -1,3 +1,31 @@
+export function publicQuizQuestionPayload(
+  question: {
+    id: string;
+    prompt: string;
+    explanation: string;
+    points: number;
+    timeLimitMs: number;
+    imageId: string | null;
+    options: { id: string; label: string; sortOrder: number; isCorrect: boolean }[];
+  },
+  revealAnswers = false,
+) {
+  return {
+    id: question.id,
+    prompt: question.prompt,
+    points: question.points,
+    timeLimitMs: question.timeLimitMs,
+    imageId: question.imageId,
+    explanation: revealAnswers ? question.explanation : undefined,
+    options: question.options.map((o) => ({
+      id: o.id,
+      label: o.label,
+      sortOrder: o.sortOrder,
+      ...(revealAnswers ? { isCorrect: o.isCorrect } : {}),
+    })),
+  };
+}
+
 export function publicCodingProblem(problem: {
   description: string;
   constraints: string;

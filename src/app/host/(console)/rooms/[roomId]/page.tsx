@@ -6,15 +6,18 @@ import { Brand } from "@/components/Brand";
 import { api } from "@/lib/api-client";
 import { useRealtime } from "@/lib/use-realtime";
 import { HostProctorGrid } from "@/components/HostProctorGrid";
+import { QuizBuilder } from "@/components/QuizBuilder";
 
 type Health = Record<string, "HEALTHY" | "DEGRADED" | "OFFLINE">;
 
 type Payload = {
   room: { id: string; name: string; code: string; status: string; currentActivityId: string | null };
-  activities: { id: string; type: string; title: string; status: string; remainingMs: number }[];
+  activities: { id: string; type: string; title: string; status: string; remainingMs: number; durationMs: number }[];
   teams: { id: string; name: string; members: { user: { displayName: string } }[] }[];
-  board: { teamId: string; score: number }[];
+  board: { rank: number; teamId: string; score: number; name: string; avatars: { displayName: string }[] }[];
   submissions: { id: string; status: string; pointsAwarded: number; user: string }[];
+  progress: { teamId: string; name: string; members: string[]; answered: number; total: number }[];
+  currentQuestion: { id: string; prompt: string } | null;
   proctor: { userId: string; sharing: boolean; connected: boolean; teamId: string }[];
   health: Health;
   quizzes: { activityId: string; questions: { id: string; prompt: string }[] }[];
@@ -26,12 +29,20 @@ export default function HostControl() {
   const [data, setData] = useState<Payload | null>(null);
   const [tab, setTab] = useState<"ops" | "build" | "proctor">("ops");
 
+  const [now, setNow] = useState(Date.now());
+  const [fetchedAt, setFetchedAt] = useState(Date.now());
+
   const load = useCallback(async () => {
     const res = await api<Payload>(`/api/host/rooms/${roomId}`);
     setData(res);
+    setFetchedAt(Date.now());
   }, [roomId]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, []);
   useRealtime(roomId, () => { void load(); });
 
   async function control(action: string, activityId?: string) {
@@ -48,27 +59,6 @@ export default function HostControl() {
     await api(`/api/host/activities?roomId=${roomId}`, {
       method: "POST",
       body: JSON.stringify({ type, title, durationMs: type === "CODING" ? 900000 : 60000 }),
-    });
-    await load();
-  }
-
-  async function addQuestion(activityId: string) {
-    const promptText = prompt("Question text?");
-    if (!promptText) return;
-    await api("/api/host/quiz/questions", {
-      method: "POST",
-      body: JSON.stringify({
-        activityId,
-        prompt: promptText,
-        explanation: "Reviewed by host.",
-        points: 100,
-        options: [
-          { label: "Option A", isCorrect: true },
-          { label: "Option B", isCorrect: false },
-          { label: "Option C", isCorrect: false },
-          { label: "Option D", isCorrect: false },
-        ],
-      }),
     });
     await load();
   }
@@ -98,6 +88,11 @@ export default function HostControl() {
 
   if (!data) return <main className="p-8">Loading control room…</main>;
   const current = data.activities.find((a) => a.id === data.room.currentActivityId);
+  const remaining = current
+    ? current.status === "PAUSED" || current.status === "LOCKED" || current.status === "ENDED"
+      ? current.remainingMs
+      : Math.max(0, current.remainingMs - (now - fetchedAt))
+    : 0;
 
   return (
     <main className="min-h-screen">
@@ -144,10 +139,11 @@ export default function HostControl() {
                 <p className="mono text-xs text-[var(--lime)]">{current?.type ?? "STANDBY"}</p>
                 <h1 className="text-3xl font-semibold">{current?.title ?? "No active round"}</h1>
               </div>
-              <div className="mono text-4xl">{Math.ceil((current?.remainingMs ?? 0) / 1000)}s</div>
+              <div className="mono text-4xl">{Math.ceil(remaining / 1000)}s</div>
             </div>
+            <p className="mt-2 text-sm text-[var(--mute)]">{data.currentQuestion ? `Question: ${data.currentQuestion.prompt}` : "No live question"}</p>
             <div className="mt-4 flex flex-wrap gap-2">
-              {["START", "PAUSE", "RESUME", "LOCK", "UNLOCK", "ADD_TIME", "END", "NEXT"].map((a) => (
+              {["START", "PAUSE", "RESUME", "LOCK", "UNLOCK", "ADD_TIME", "END", "NEXT", "NEXT_QUESTION"].map((a) => (
                 <button
                   key={a}
                   disabled={!current && a !== "START"}
@@ -190,13 +186,19 @@ export default function HostControl() {
           <aside className="border-l border-[var(--line)] p-4">
             <h2 className="mono text-xs text-[var(--mute)]">LEADERBOARD</h2>
             <ol className="mt-2 space-y-1 text-sm">
-              {data.board.map((row, i) => (
+              {data.board.map((row) => (
                 <li key={row.teamId} className="flex justify-between">
-                  <span>{i + 1}. {data.teams.find((t) => t.id === row.teamId)?.name}</span>
+                  <span>{row.rank}. {row.name}</span>
                   <span className="mono text-[var(--lime)]">{row.score}</span>
                 </li>
               ))}
             </ol>
+            <h2 className="mono mt-6 text-xs text-[var(--mute)]">PROGRESS</h2>
+            <ul className="mt-2 space-y-1 text-xs">
+              {data.progress?.map((p) => (
+                <li key={p.teamId}>{p.name}: {p.answered}/{p.total} · {p.members.join(", ")}</li>
+              ))}
+            </ul>
             <h2 className="mono mt-6 text-xs text-[var(--mute)]">TEAMS</h2>
             <ul className="mt-2 space-y-2 text-sm">
               {data.teams.map((t) => (
@@ -231,14 +233,13 @@ export default function HostControl() {
                   <span className="mono text-xs">{a.type}</span>
                 </div>
                 {a.type === "QUIZ" && (
-                  <div className="mt-2">
-                    <button className="text-sm text-[var(--lime)]" onClick={() => void addQuestion(a.id)}>Add question</button>
-                    <ul className="mt-2 text-sm text-[var(--mute)]">
-                      {data.quizzes.find((q) => q.activityId === a.id)?.questions.map((q) => (
-                        <li key={q.id}>{q.prompt}</li>
-                      ))}
-                    </ul>
-                  </div>
+                  <QuizBuilder
+                    roomId={roomId}
+                    activityId={a.id}
+                    title={a.title}
+                    durationMs={a.durationMs}
+                    onChanged={() => void load()}
+                  />
                 )}
                 {a.type === "CODING" && (
                   <button className="mt-2 text-sm text-[var(--lime)]" onClick={() => void saveCoding(a.id)}>Load sample problem + hidden tests</button>

@@ -4,6 +4,8 @@ import { requireUser } from "@/lib/request";
 import { remainingMs } from "@/lib/timer";
 import { publicCodingProblem, publicQuizQuestion } from "@/lib/access";
 
+const QUIZ_VISIBLE = new Set(["ACTIVE", "PAUSED", "LOCKED", "ENDED"]);
+
 export async function GET(req: Request) {
   try {
     const user = await requireUser(req);
@@ -14,8 +16,28 @@ export async function GET(req: Request) {
       where: { id: roomId },
       include: {
         event: true,
-        teams: { include: { members: { include: { user: true } } } },
-        activities: { orderBy: { sortOrder: "asc" }, include: { quiz: { include: { questions: true } }, codingProblem: { include: { tests: true } } } },
+        teams: {
+          include: {
+            members: {
+              include: {
+                user: {
+                  select: {
+                    id: true,
+                    displayName: true,
+                    avatars: { select: { style: true, seed: true, config: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+        activities: {
+          orderBy: { sortOrder: "asc" },
+          include: {
+            quiz: { include: { questions: { orderBy: { sortOrder: "asc" } } } },
+            codingProblem: { include: { tests: true } },
+          },
+        },
       },
     });
     if (!room) throw new HttpError(404, "Room not found.");
@@ -27,23 +49,33 @@ export async function GET(req: Request) {
     const current = room.activities.find((a) => a.id === room.currentActivityId) ?? null;
     let question = null;
     let coding = null;
+    let instructions: string | null = null;
+    let mySubmission: { optionId: string; questionId: string } | null = null;
+
     if (current?.type === "QUIZ" && current.quiz) {
-      const currentQ = current.quiz.questions.find((q) => q.current) ?? current.quiz.questions[0];
-      if (currentQ) {
+      instructions = current.quiz.instructions || null;
+      const live = QUIZ_VISIBLE.has(current.status);
+      const currentQ = current.quiz.questions.find((q) => q.current) ?? null;
+      if (live && currentQ) {
+        const reveal = isHost || current.status === "LOCKED" || current.status === "ENDED";
         if (isHost) {
           question = await prisma.quizQuestion.findUnique({
             where: { id: currentQ.id },
-            include: { options: true },
+            include: { options: { orderBy: { sortOrder: "asc" } } },
           });
         } else {
-          question = await publicQuizQuestion(currentQ.id);
+          question = await publicQuizQuestion(currentQ.id, reveal);
+        }
+        if (member) {
+          const sub = await prisma.quizSubmission.findUnique({
+            where: { questionId_teamId: { questionId: currentQ.id, teamId: member.teamId } },
+          });
+          if (sub) mySubmission = { optionId: sub.optionId, questionId: sub.questionId };
         }
       }
     }
-    if (current?.type === "CODING" && current.codingProblem) {
-      coding = isHost
-        ? current.codingProblem
-        : publicCodingProblem(current.codingProblem);
+    if (current?.type === "CODING" && current.codingProblem && QUIZ_VISIBLE.has(current.status)) {
+      coding = isHost ? current.codingProblem : publicCodingProblem(current.codingProblem);
     }
 
     const board = await prisma.leaderboardEntry.findMany({
@@ -52,9 +84,10 @@ export async function GET(req: Request) {
     });
 
     const shop = await prisma.powerShopOffer.findMany({ where: { roomId, active: true } });
+    const serverNow = Date.now();
 
     return jsonOk({
-      serverNow: Date.now(),
+      serverNow,
       room: {
         id: room.id,
         name: room.name,
@@ -75,6 +108,7 @@ export async function GET(req: Request) {
         members: t.members.map((m) => ({
           id: m.user.id,
           displayName: m.user.displayName,
+          avatar: m.user.avatars,
         })),
       })),
       activities: room.activities.map((a) => ({
@@ -83,19 +117,30 @@ export async function GET(req: Request) {
         title: a.title,
         status: a.status,
         sortOrder: a.sortOrder,
-        remainingMs: remainingMs(a),
-        endsAt: a.endsAt,
+        remainingMs: remainingMs(a, serverNow),
+        endsAt: isHost ? a.endsAt : null,
+        startedAt: isHost ? a.startedAt : null,
+        pausedAt: isHost ? a.pausedAt : null,
       })),
       currentActivityId: room.currentActivityId,
+      instructions,
       question,
+      mySubmission,
       coding,
-      leaderboard: board.map((row, i) => ({
-        rank: i + 1,
-        teamId: row.teamId,
-        score: row.score,
-        name: room.teams.find((t) => t.id === row.teamId)?.name ?? "Team",
-        avatarSeed: room.teams.find((t) => t.id === row.teamId)?.avatarSeed ?? "alpha",
-      })),
+      leaderboard: board.map((row, i) => {
+        const team = room.teams.find((t) => t.id === row.teamId);
+        return {
+          rank: i + 1,
+          teamId: row.teamId,
+          score: row.score,
+          name: team?.name ?? "Team",
+          avatarSeed: team?.avatarSeed ?? "alpha",
+          avatars: (team?.members ?? []).map((m) => ({
+            displayName: m.user.displayName,
+            avatar: m.user.avatars,
+          })),
+        };
+      }),
       shop,
     });
   } catch (e) {

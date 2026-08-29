@@ -1,9 +1,9 @@
 import "server-only";
 import { prisma } from "./db";
 import { HttpError } from "./http";
-import { publicCodingProblem } from "./public-payload";
+import { publicCodingProblem, publicQuizQuestionPayload } from "./public-payload";
 
-export { publicCodingProblem };
+export { publicCodingProblem, publicQuizQuestionPayload };
 
 export async function requireHostOwnsRoom(hostId: string, roomId: string) {
   const room = await prisma.room.findUnique({
@@ -24,18 +24,11 @@ export async function requireMembership(userId: string, roomId: string) {
   return member;
 }
 
-export async function publicQuizQuestion(questionId: string) {
+export async function publicQuizQuestion(questionId: string, revealAnswers = false) {
   const q = await prisma.quizQuestion.findUnique({
     where: { id: questionId },
     include: { options: { orderBy: { sortOrder: "asc" } } },
   });
   if (!q) return null;
-  return {
-    id: q.id,
-    prompt: q.prompt,
-    points: q.points,
-    timeLimitMs: q.timeLimitMs,
-    imageId: q.imageId,
-    options: q.options.map((o) => ({ id: o.id, label: o.label, sortOrder: o.sortOrder })),
-  };
+  return publicQuizQuestionPayload(q, revealAnswers);
 }
