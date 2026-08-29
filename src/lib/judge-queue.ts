@@ -22,10 +22,10 @@ export function judgeQueue() {
   return queue;
 }
 
-export async function enqueueJudge(submissionId: string) {
+export async function enqueueJudge(submissionId: string, options: { runOnly?: boolean } = {}) {
   await judgeQueue().add(
     "judge",
-    { submissionId },
+    { submissionId, runOnly: options.runOnly === true },
     { jobId: submissionId, attempts: 5 },
   );
 }
