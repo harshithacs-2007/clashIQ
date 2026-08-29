@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "motion/react";
 import { Brand } from "@/components/Brand";
@@ -136,7 +137,7 @@ export default function PlayPage() {
     return (
       <main className="p-8">
         <p className="text-[var(--danger)]">{loadError}</p>
-        <a className="mt-4 inline-block text-[var(--lime)]" href="/join">Join with a room code</a>
+        <Link className="mt-4 inline-block text-[var(--lime)]" href="/join">Join with a room code</Link>
       </main>
     );
   }
