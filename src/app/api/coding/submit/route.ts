@@ -41,8 +41,8 @@ export async function POST(req: Request) {
         idempotencyKey: key,
       },
     });
-    await enqueueJudge(submission.id);
-    return jsonOk({ submissionId: submission.id, status: "QUEUED" }, 202);
+    await enqueueJudge(submission.id, { runOnly: body.runOnly });
+    return jsonOk({ submissionId: submission.id, status: "QUEUED", runOnly: body.runOnly }, 202);
   } catch (e) {
     return jsonError(e);
   }
