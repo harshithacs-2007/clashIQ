@@ -20,6 +20,9 @@ export async function POST(req: Request) {
     if (!room.joinsEnabled || room.status === "LOCKED") {
       throw new HttpError(403, "Joins are locked for this room.");
     }
+    const already = await prisma.teamMember.findFirst({
+      where: { userId: user.id, team: { roomId: room.id } },
+    });
     await audit({ roomId: room.id, actorId: user.id, action: "ROOM_JOIN_ATTEMPT" });
     return jsonOk({
       room: {
@@ -28,7 +31,10 @@ export async function POST(req: Request) {
         eventTitle: room.event.title,
         teamSize: room.teamSize,
         status: room.status,
+        joinPath: `/join/${room.code}`,
       },
+      alreadyOnTeam: Boolean(already),
+      teamId: already?.teamId ?? null,
     });
   } catch (e) {
     return jsonError(e);

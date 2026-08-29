@@ -105,6 +105,12 @@ export default function HostControl() {
         <Brand compact />
         <div className="mono text-xs">
           {data.room.name} · CODE {data.room.code} · {data.room.status}
+          <button
+            className="ml-3 text-[var(--signal)]"
+            onClick={() => void navigator.clipboard.writeText(`${window.location.origin}/join/${data.room.code}`)}
+          >
+            Copy join link
+          </button>
         </div>
         <div className="flex gap-2 text-xs">
           {(["ops", "build", "proctor"] as const).map((t) => (

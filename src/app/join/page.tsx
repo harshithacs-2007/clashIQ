@@ -29,11 +29,19 @@ export default function JoinPage() {
     setError("");
     const fd = new FormData(e.currentTarget);
     try {
-      const res = await api<{ room: { id: string; name: string; teamSize: number } }>("/api/rooms/join", {
+      const res = await api<{
+        alreadyOnTeam: boolean;
+        teamId: string | null;
+        room: { id: string; name: string; teamSize: number };
+      }>("/api/rooms/join", {
         method: "POST",
         body: JSON.stringify({ code: fd.get("code") }),
       });
       setRoom(res.room);
+      if (res.alreadyOnTeam) {
+        router.push(`/play/${res.room.id}`);
+        return;
+      }
       setStep("avatar");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not join.");
@@ -41,28 +49,43 @@ export default function JoinPage() {
   }
 
   async function saveAvatar() {
-    await api("/api/avatar", { method: "PUT", body: JSON.stringify(avatar) });
-    const state = await api<{ teams: typeof teams }>(`/api/rooms/state?roomId=${room!.id}`);
-    setTeams(state.teams);
-    setStep("team");
+    setError("");
+    try {
+      await api("/api/avatar", { method: "PUT", body: JSON.stringify(avatar) });
+      const state = await api<{ teams: typeof teams }>(`/api/teams?roomId=${room!.id}`);
+      setTeams(state.teams);
+      setStep("team");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save avatar.");
+    }
   }
 
   async function makeTeam(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    setError("");
     const fd = new FormData(e.currentTarget);
-    await api(`/api/teams?roomId=${room!.id}`, {
-      method: "POST",
-      body: JSON.stringify({ name: fd.get("name") }),
-    });
-    router.push(`/play/${room!.id}`);
+    try {
+      await api(`/api/teams?roomId=${room!.id}`, {
+        method: "POST",
+        body: JSON.stringify({ name: fd.get("name") }),
+      });
+      router.push(`/play/${room!.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create team.");
+    }
   }
 
   async function joinTeam(teamId: string) {
-    await api(`/api/teams?roomId=${room!.id}`, {
-      method: "POST",
-      body: JSON.stringify({ name: "join", teamId }),
-    });
-    router.push(`/play/${room!.id}`);
+    setError("");
+    try {
+      await api(`/api/teams?roomId=${room!.id}`, {
+        method: "POST",
+        body: JSON.stringify({ name: "join", teamId }),
+      });
+      router.push(`/play/${room!.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not join team.");
+    }
   }
 
   return (
@@ -98,7 +121,8 @@ export default function JoinPage() {
               <label className="block">Visor <input type="range" min={0} max={5} value={avatar.visor} onChange={(e) => setAvatar({ ...avatar, visor: Number(e.target.value) })} /></label>
               <label className="block">Crest <input type="range" min={0} max={5} value={avatar.crest} onChange={(e) => setAvatar({ ...avatar, crest: Number(e.target.value) })} /></label>
               <label className="block">Mark <input type="range" min={0} max={5} value={avatar.mark} onChange={(e) => setAvatar({ ...avatar, mark: Number(e.target.value) })} /></label>
-              <button onClick={() => void saveAvatar()} className="bg-[var(--lime)] px-4 py-2 font-semibold text-black">Lock avatar</button>
+          {error && <p className="mt-3 text-[var(--danger)]">{error}</p>}
+          <button onClick={() => void saveAvatar()} className="mt-4 bg-[var(--lime)] px-4 py-2 font-semibold text-black">Lock avatar</button>
             </div>
           </div>
         </div>
@@ -115,6 +139,7 @@ export default function JoinPage() {
               </li>
             ))}
           </ul>
+          {error && <p className="mt-3 text-[var(--danger)]">{error}</p>}
           <form onSubmit={makeTeam} className="mt-6 flex gap-2">
             <input name="name" required minLength={2} placeholder="New team name" className="flex-1 border border-[var(--line)] bg-[var(--panel)] px-3 py-2" />
             <button className="bg-[var(--lime)] px-4 py-2 font-semibold text-black">Create</button>

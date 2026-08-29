@@ -36,6 +36,7 @@ export default function PlayPage() {
   const params = useParams<{ roomId: string }>();
   const roomId = params.roomId;
   const [state, setState] = useState<State | null>(null);
+  const [loadError, setLoadError] = useState("");
   const [picked, setPicked] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string>("");
   const [source, setSource] = useState("print('ok')");
@@ -44,9 +45,14 @@ export default function PlayPage() {
   const [now, setNow] = useState(Date.now());
 
   const refresh = useCallback(async () => {
-    const s = await api<State>(`/api/rooms/state?roomId=${roomId}`);
-    setState(s);
-    if (s.coding?.starterCode?.[String(lang)]) setSource(s.coding.starterCode[String(lang)]!);
+    try {
+      const s = await api<State>(`/api/rooms/state?roomId=${roomId}`);
+      setState(s);
+      setLoadError("");
+      if (s.coding?.starterCode?.[String(lang)]) setSource(s.coding.starterCode[String(lang)]!);
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Could not load room.");
+    }
   }, [roomId, lang]);
 
   useEffect(() => { void refresh(); }, [refresh]);
@@ -126,6 +132,14 @@ export default function PlayPage() {
     return () => document.removeEventListener("visibilitychange", vis);
   }, [roomId]);
 
+  if (loadError) {
+    return (
+      <main className="p-8">
+        <p className="text-[var(--danger)]">{loadError}</p>
+        <a className="mt-4 inline-block text-[var(--lime)]" href="/join">Join with a room code</a>
+      </main>
+    );
+  }
   if (!state) return <main className="p-8">Syncing authoritative state…</main>;
 
   if (state.room.status === "CLOSED") {
