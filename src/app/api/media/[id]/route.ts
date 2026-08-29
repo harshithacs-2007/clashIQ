@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/db";
 import { jsonError, HttpError } from "@/lib/http";
 import { requireUser } from "@/lib/request";
-import { requireHostOwnsRoom, requireMembership } from "@/lib/access";
+import { requireMembership } from "@/lib/access";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
