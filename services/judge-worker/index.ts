@@ -9,7 +9,13 @@ const JUDGE0_URL = process.env.JUDGE0_URL;
 const JUDGE0_TOKEN = process.env.JUDGE0_AUTH_TOKEN;
 const connection = new Redis(REDIS_URL, { maxRetriesPerRequest: null });
 
-type Judge0Result = { stdout?: string | null; stderr?: string | null; compile_output?: string | null; status?: { id: number; description?: string }; time?: string };
+type Judge0Result = {
+  stdout?: string | null;
+  stderr?: string | null;
+  compile_output?: string | null;
+  status?: { id: number; description?: string };
+  time?: string;
+};
 
 async function runJudge0(languageId: number, source: string, stdin: string, cpu: number, mem: number): Promise<Judge0Result> {
   if (!JUDGE0_URL) return { status: { id: 13, description: "Judge Unavailable" }, compile_output: "CODE_JUDGE not configured" };
@@ -69,19 +75,37 @@ const worker = new Worker(QUEUE, async (job) => {
   if (points > 0) {
     const member = await prisma.teamMember.findFirst({ where: { userId: sub.userId, team: { roomId: sub.activity.roomId } } });
     if (member) {
-      const best = await prisma.codingSubmission.aggregate({ where: { activityId: sub.activityId, userId: sub.userId, id: { not: sub.id }, status: { in: ["ACCEPTED", "PARTIAL"] } }, _max: { pointsAwarded: true } });
-      const previousBest = best._max.pointsAwarded ?? 0;
-      const delta = Math.max(0, points - previousBest);
-      if (delta > 0) {
-        const idempotencyKey = `score:code:${sub.id}`;
-        const existing = await prisma.scoreTransaction.findUnique({ where: { idempotencyKey } });
-        if (!existing) {
-          await prisma.$transaction(async (tx) => {
-            await tx.scoreTransaction.create({ data: { roomId: sub.activity.roomId, teamId: member.teamId, delta, reason: "CODING_RESULT", refType: "coding_submission", refId: sub.id, actorUserId: sub.userId, idempotencyKey } });
-            await tx.leaderboardEntry.upsert({ where: { roomId_teamId: { roomId: sub.activity.roomId, teamId: member.teamId } }, create: { roomId: sub.activity.roomId, teamId: member.teamId, score: delta }, update: { score: { increment: delta } } });
-          });
-        }
-      }
+      const idempotencyKey = `score:code:${sub.id}`;
+      await prisma.$transaction(async (tx) => {
+        // PostgreSQL advisory transaction lock serializes concurrent submissions for
+        // the same participant/activity while leaving unrelated submissions concurrent.
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`${sub.activityId}:${sub.userId}`}))`;
+
+        const existing = await tx.scoreTransaction.findUnique({ where: { idempotencyKey } });
+        if (existing) return;
+
+        const best = await tx.codingSubmission.aggregate({
+          where: {
+            activityId: sub.activityId,
+            userId: sub.userId,
+            id: { not: sub.id },
+            status: { in: ["ACCEPTED", "PARTIAL"] },
+          },
+          _max: { pointsAwarded: true },
+        });
+        const previousBest = best._max.pointsAwarded ?? 0;
+        const delta = Math.max(0, points - previousBest);
+        if (delta === 0) return;
+
+        await tx.scoreTransaction.create({
+          data: { roomId: sub.activity.roomId, teamId: member.teamId, delta, reason: "CODING_RESULT", refType: "coding_submission", refId: sub.id, actorUserId: sub.userId, idempotencyKey },
+        });
+        await tx.leaderboardEntry.upsert({
+          where: { roomId_teamId: { roomId: sub.activity.roomId, teamId: member.teamId } },
+          create: { roomId: sub.activity.roomId, teamId: member.teamId, score: delta },
+          update: { score: { increment: delta } },
+        });
+      });
     }
   }
 
