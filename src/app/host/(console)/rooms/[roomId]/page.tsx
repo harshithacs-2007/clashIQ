@@ -28,6 +28,8 @@ export default function HostControl() {
   const { roomId } = useParams<{ roomId: string }>();
   const [data, setData] = useState<Payload | null>(null);
   const [tab, setTab] = useState<"ops" | "build" | "proctor">("ops");
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const [now, setNow] = useState(Date.now());
   const [fetchedAt, setFetchedAt] = useState(Date.now());
@@ -45,45 +47,71 @@ export default function HostControl() {
   }, []);
   useRealtime(roomId, () => { void load(); });
 
+  async function runAction(key: string, fn: () => Promise<void>) {
+    if (actionBusy) return;
+    setActionBusy(key);
+    setActionError(null);
+    try {
+      await fn();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Action failed. Please try again.");
+    } finally {
+      setActionBusy(null);
+    }
+  }
+
   async function control(action: string, activityId?: string) {
-    await api("/api/host/control", {
-      method: "POST",
-      body: JSON.stringify({ roomId, action, activityId, extraMs: action === "ADD_TIME" ? 30000 : undefined }),
+    await runAction(action, async () => {
+      await api("/api/host/control", {
+        method: "POST",
+        body: JSON.stringify({ roomId, action, activityId, extraMs: action === "ADD_TIME" ? 30000 : undefined }),
+      });
+      await load();
     });
-    await load();
+  }
+
+  async function powerShop(action: "OPEN" | "CLOSE") {
+    await runAction(`SHOP_${action}`, async () => {
+      await api("/api/power/shop", { method: "PUT", body: JSON.stringify({ roomId, action }) });
+      await load();
+    });
   }
 
   async function addActivity(type: "QUIZ" | "CODING" | "CHALLENGE") {
     const title = prompt(`${type} title?`);
-    if (!title) return;
-    await api(`/api/host/activities?roomId=${roomId}`, {
-      method: "POST",
-      body: JSON.stringify({ type, title, durationMs: type === "CODING" ? 900000 : 60000 }),
+    if (!title?.trim()) return;
+    await runAction(`ADD_${type}`, async () => {
+      await api(`/api/host/activities?roomId=${roomId}`, {
+        method: "POST",
+        body: JSON.stringify({ type, title: title.trim(), durationMs: type === "CODING" ? 900000 : 60000 }),
+      });
+      await load();
     });
-    await load();
   }
 
   async function saveCoding(activityId: string) {
-    await api("/api/host/coding", {
-      method: "PUT",
-      body: JSON.stringify({
-        activityId,
-        description: "Read an integer n and print n*n.",
-        constraints: "1 <= n <= 1000",
-        inputFormat: "A single integer n",
-        outputFormat: "n squared",
-        examples: [{ input: "4", output: "16" }],
-        difficulty: "easy",
-        allowedLanguages: [71, 63],
-        starterCode: { "71": "n=int(input())\nprint(n*n)\n", "63": "const n=+require('fs').readFileSync(0,'utf8');\nconsole.log(n*n)\n" },
-        tests: [
-          { input: "4", expected: "16", points: 20, hidden: false },
-          { input: "5", expected: "25", points: 20, hidden: true },
-          { input: "10", expected: "100", points: 60, hidden: true },
-        ],
-      }),
+    await runAction(`CODING_${activityId}`, async () => {
+      await api("/api/host/coding", {
+        method: "PUT",
+        body: JSON.stringify({
+          activityId,
+          description: "Read an integer n and print n*n.",
+          constraints: "1 <= n <= 1000",
+          inputFormat: "A single integer n",
+          outputFormat: "n squared",
+          examples: [{ input: "4", output: "16" }],
+          difficulty: "easy",
+          allowedLanguages: [71, 63],
+          starterCode: { "71": "n=int(input())\nprint(n*n)\n", "63": "const n=+require('fs').readFileSync(0,'utf8');\nconsole.log(n*n)\n" },
+          tests: [
+            { input: "4", expected: "16", points: 20, hidden: false },
+            { input: "5", expected: "25", points: 20, hidden: true },
+            { input: "10", expected: "100", points: 60, hidden: true },
+          ],
+        }),
+      });
+      await load();
     });
-    await load();
   }
 
   if (!data) return <main className="p-8">Loading control room…</main>;
@@ -102,19 +130,25 @@ export default function HostControl() {
           {data.room.name} · CODE {data.room.code} · {data.room.status}
           <button
             className="ml-3 text-[var(--signal)]"
-            onClick={() => void navigator.clipboard.writeText(`${window.location.origin}/join/${data.room.code}`)}
+            onClick={() => void runAction("COPY_LINK", async () => { await navigator.clipboard.writeText(`${window.location.origin}/join/${data.room.code}`); })}
           >
             Copy join link
           </button>
         </div>
         <div className="flex gap-2 text-xs">
-          {(["ops", "build", "proctor"] as const).map((t) => (
-            <button key={t} onClick={() => setTab(t)} className={`px-3 py-1 ${tab === t ? "bg-[var(--lime)] text-black" : "border border-[var(--line)]"}`}>
+          {["ops", "build", "proctor"].map((t) => (
+            <button key={t} onClick={() => setTab(t as "ops" | "build" | "proctor")} className={`px-3 py-1 ${tab === t ? "bg-[var(--lime)] text-black" : "border border-[var(--line)]"}`}>
               {t.toUpperCase()}
             </button>
           ))}
         </div>
       </header>
+
+      {actionError && (
+        <div className="mx-5 mt-3 border border-[var(--danger)] px-3 py-2 text-sm text-[var(--danger)]" role="alert">
+          {actionError}
+        </div>
+      )}
 
       {tab === "ops" && (
         <div className="grid grid-cols-[220px_1fr_280px] gap-0">
@@ -129,7 +163,7 @@ export default function HostControl() {
             <h2 className="mono mt-6 text-xs text-[var(--mute)]">ROOM</h2>
             <div className="mt-2 grid grid-cols-2 gap-1 text-xs">
               {["OPEN_ROOM", "LOCK_ROOM", "PAUSE_ROOM", "RESUME_ROOM", "CLOSE_ROOM"].map((a) => (
-                <button key={a} onClick={() => void control(a)} className="border border-[var(--line)] px-2 py-1">{a.replace("_", " ")}</button>
+                <button key={a} disabled={!!actionBusy} onClick={() => void control(a)} className="border border-[var(--line)] px-2 py-1 disabled:opacity-50">{a.replace("_", " ")}</button>
               ))}
             </div>
           </aside>
@@ -146,26 +180,22 @@ export default function HostControl() {
               {["START", "PAUSE", "RESUME", "LOCK", "UNLOCK", "ADD_TIME", "END", "NEXT", "NEXT_QUESTION"].map((a) => (
                 <button
                   key={a}
-                  disabled={!current && a !== "START"}
+                  disabled={(!current && a !== "START") || !!actionBusy}
                   onClick={() => void control(a, current?.id ?? data.activities[0]?.id)}
-                  className="bg-[var(--panel-2)] px-3 py-2 text-sm"
+                  className="bg-[var(--panel-2)] px-3 py-2 text-sm disabled:opacity-50"
                 >
-                  {a.replace("_", " ")}
+                  {actionBusy === a ? "WORKING…" : a.replace("_", " ")}
                 </button>
               ))}
-              <button onClick={() => void api("/api/power/shop", { method: "PUT", body: JSON.stringify({ roomId, action: "OPEN" }) })} className="bg-[var(--lime)] px-3 py-2 text-sm font-semibold text-black">
-                Open Power Shop
-              </button>
-              <button onClick={() => void api("/api/power/shop", { method: "PUT", body: JSON.stringify({ roomId, action: "CLOSE" }) })} className="px-3 py-2 text-sm">
-                Close shop
-              </button>
+              <button disabled={!!actionBusy} onClick={() => void powerShop("OPEN")} className="bg-[var(--lime)] px-3 py-2 text-sm font-semibold text-black disabled:opacity-50">Open Power Shop</button>
+              <button disabled={!!actionBusy} onClick={() => void powerShop("CLOSE")} className="px-3 py-2 text-sm disabled:opacity-50">Close shop</button>
             </div>
             <h2 className="mt-8 text-sm font-semibold">Run of show</h2>
             <ol className="mt-2 space-y-1">
               {data.activities.map((a) => (
                 <li key={a.id} className={`flex justify-between px-3 py-2 ${a.id === current?.id ? "bg-[var(--panel-2)]" : ""}`}>
                   <span>{a.title} · {a.type} · {a.status}</span>
-                  <button className="text-xs text-[var(--signal)]" onClick={() => void control("START", a.id)}>Go live</button>
+                  <button disabled={!!actionBusy} className="text-xs text-[var(--signal)] disabled:opacity-50" onClick={() => void control("START", a.id)}>Go live</button>
                 </li>
               ))}
             </ol>
@@ -175,7 +205,7 @@ export default function HostControl() {
                 <li key={c.id} className="flex justify-between py-1">
                   <span>{c.status}</span>
                   {c.status === "LIVE" && (
-                    <button className="text-[var(--lime)]" onClick={() => void api("/api/challenges", { method: "PATCH", body: JSON.stringify({ challengeId: c.id, action: "COMPLETE", winnerId: c.challengerId }) })}>
+                    <button disabled={!!actionBusy} className="text-[var(--lime)] disabled:opacity-50" onClick={() => void runAction(`CHALLENGE_${c.id}`, async () => { await api("/api/challenges", { method: "PATCH", body: JSON.stringify({ challengeId: c.id, action: "COMPLETE", winnerId: c.challengerId }) }); await load(); })}>
                       Award challenger
                     </button>
                   )}
@@ -221,9 +251,9 @@ export default function HostControl() {
       {tab === "build" && (
         <section className="p-6">
           <div className="flex gap-2">
-            <button onClick={() => void addActivity("QUIZ")} className="border border-[var(--line)] px-3 py-2">Add quiz</button>
-            <button onClick={() => void addActivity("CODING")} className="border border-[var(--line)] px-3 py-2">Add coding</button>
-            <button onClick={() => void addActivity("CHALLENGE")} className="border border-[var(--line)] px-3 py-2">Add challenge slot</button>
+            <button disabled={!!actionBusy} onClick={() => void addActivity("QUIZ")} className="border border-[var(--line)] px-3 py-2 disabled:opacity-50">Add quiz</button>
+            <button disabled={!!actionBusy} onClick={() => void addActivity("CODING")} className="border border-[var(--line)] px-3 py-2 disabled:opacity-50">Add coding</button>
+            <button disabled={!!actionBusy} onClick={() => void addActivity("CHALLENGE")} className="border border-[var(--line)] px-3 py-2 disabled:opacity-50">Add challenge slot</button>
           </div>
           <ul className="mt-6 space-y-4">
             {data.activities.map((a) => (
@@ -233,16 +263,10 @@ export default function HostControl() {
                   <span className="mono text-xs">{a.type}</span>
                 </div>
                 {a.type === "QUIZ" && (
-                  <QuizBuilder
-                    roomId={roomId}
-                    activityId={a.id}
-                    title={a.title}
-                    durationMs={a.durationMs}
-                    onChanged={() => void load()}
-                  />
+                  <QuizBuilder roomId={roomId} activityId={a.id} title={a.title} durationMs={a.durationMs} onChanged={() => void load()} />
                 )}
                 {a.type === "CODING" && (
-                  <button className="mt-2 text-sm text-[var(--lime)]" onClick={() => void saveCoding(a.id)}>Load sample problem + hidden tests</button>
+                  <button disabled={!!actionBusy} className="mt-2 text-sm text-[var(--lime)] disabled:opacity-50" onClick={() => void saveCoding(a.id)}>Load sample problem + hidden tests</button>
                 )}
               </li>
             ))}
@@ -261,9 +285,7 @@ export default function HostControl() {
                 <article key={t.id} className="panel aspect-video p-3">
                   <div className="flex justify-between text-xs">
                     <span>TEAM {String(i + 1).padStart(2, "0")}</span>
-                    <span className={sess?.sharing ? "text-[var(--lime)]" : "text-[var(--danger)]"}>
-                      {sess?.sharing ? "LIVE" : sess?.connected ? "IDLE" : "OFF"}
-                    </span>
+                    <span className={sess?.sharing ? "text-[var(--lime)]" : "text-[var(--danger)]"}>{sess?.sharing ? "LIVE" : sess?.connected ? "IDLE" : "OFF"}</span>
                   </div>
                   <div className="mt-6 text-center text-sm text-[var(--mute)]">{t.name}</div>
                 </article>
