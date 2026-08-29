@@ -14,9 +14,25 @@ function resolveAppUrl(): string {
   return "http://localhost:3000";
 }
 
+const appEnvSchema = z.preprocess(
+  (value) => {
+    const v = nonempty(value)?.toLowerCase();
+    if (v === "production" || v === "prod") return "production";
+    if (v === "preview" || v === "staging" || v === "stage") return "preview";
+    if (v === "development" || v === "dev" || v === "local") return "development";
+    // Vercel exposes VERCEL_ENV separately; an unset/unknown APP_ENV should
+    // not make otherwise valid production requests fail at runtime.
+    const vercelEnv = nonempty(process.env.VERCEL_ENV)?.toLowerCase();
+    if (vercelEnv === "production") return "production";
+    if (vercelEnv === "preview") return "preview";
+    return "development";
+  },
+  z.enum(["development", "preview", "production"]),
+);
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  APP_ENV: z.enum(["development", "preview", "production"]).default("development"),
+  APP_ENV: appEnvSchema,
   APP_URL: z.string().url(),
   DATABASE_URL: z.string().optional(),
   REDIS_URL: z.string().optional(),
