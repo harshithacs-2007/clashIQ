@@ -21,3 +21,4 @@ prisma/*.db
 prisma/*.db-journal
 tsconfig.tsbuildinfo
 load-results.json
+.env*
