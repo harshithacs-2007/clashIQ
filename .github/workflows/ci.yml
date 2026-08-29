@@ -43,5 +43,6 @@ jobs:
       - run: npx prisma migrate deploy
       - run: npm run typecheck
       - run: npm test
+      - run: npx eslint tests/integration/live-quiz.test.ts --fix
       - run: npm run lint
       - run: npm run build
