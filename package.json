@@ -2,6 +2,9 @@
   "name": "clashiq",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "description": "clashIQ — realtime college competition platform",
   "scripts": {
     "dev": "next dev --turbopack",

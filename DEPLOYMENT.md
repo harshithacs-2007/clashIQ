@@ -14,7 +14,7 @@ Copy `.env.example`. Never commit `.env.local`.
 
 1. Push this repo to GitHub.
 2. In Vercel: Import Project → select the GitHub repo.
-3. Framework: Next.js. Build command is in `vercel.json` (`prisma generate`, `prisma migrate deploy`, `next build`).
+3. Framework: Next.js. Build command is in `vercel.json` (`prisma generate` then `next build`). Run `npx prisma migrate deploy` separately against the hosted database — not inside the Vercel compile step.
 4. Create **Preview** and **Production** env var sets. Preview `DATABASE_URL` must not be production.
 5. Set every variable from `.env.example` except secrets you generate yourself.
 6. `NEXT_PUBLIC_REALTIME_URL` must be the public `wss://` sidecar, not `ws://localhost`.
