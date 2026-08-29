@@ -1,0 +1,601 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PARTICIPANT
+  HOST
+}
+
+enum RoomStatus {
+  DRAFT
+  OPEN
+  LOCKED
+  LIVE
+  PAUSED
+  CLOSED
+}
+
+enum ActivityType {
+  QUIZ
+  CODING
+  CHALLENGE
+}
+
+enum ActivityStatus {
+  DRAFT
+  PUBLISHED
+  READY
+  ACTIVE
+  PAUSED
+  LOCKED
+  ENDED
+}
+
+enum ScoreReason {
+  QUIZ_RESULT
+  CODING_RESULT
+  CHALLENGE_WIN
+  POWER_PURCHASE
+  POWER_STEAL
+  POWER_SHIELD
+  HOST_ADJUSTMENT
+}
+
+enum PowerCardType {
+  STEAL
+  DOUBLE_POINTS
+  SHIELD
+  FREEZE
+}
+
+enum ChallengeStatus {
+  PENDING
+  ACCEPTED
+  COUNTDOWN
+  LIVE
+  JUDGING
+  COMPLETED
+  DECLINED
+  CANCELLED
+}
+
+enum SubmissionStatus {
+  QUEUED
+  RUNNING
+  ACCEPTED
+  PARTIAL
+  WRONG_ANSWER
+  TIME_LIMIT
+  MEMORY_LIMIT
+  COMPILE_ERROR
+  RUNTIME_ERROR
+  INTERNAL_ERROR
+  UNAVAILABLE
+}
+
+enum HealthComponent {
+  APPLICATION
+  DATABASE
+  REALTIME
+  CODE_JUDGE
+  PROCTORING
+}
+
+enum HealthState {
+  HEALTHY
+  DEGRADED
+  OFFLINE
+}
+
+enum ProctorSignal {
+  SHARE_STARTED
+  SHARE_STOPPED
+  CONNECTION_LOST
+  CONNECTION_RESTORED
+  VISIBILITY_HIDDEN
+  VISIBILITY_VISIBLE
+  FOCUS_LOST
+  FOCUS_GAINED
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  displayName  String
+  passwordHash String
+  role         Role      @default(PARTICIPANT)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastLoginAt  DateTime?
+
+  sessions            Session[]
+  loginAttempts       LoginAttempt[]
+  hostedEvents        Event[]            @relation("EventHost")
+  memberships         TeamMember[]
+  avatars             Avatar[]
+  quizSubmissions     QuizSubmission[]
+  codingSubmissions   CodingSubmission[]
+  auditEvents         AuditEvent[]
+  idempotencyKeys     IdempotencyKey[]
+  proctoringSessions  ProctoringSession[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  ip        String?
+  userAgent String?
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  email     String
+  ip        String
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userId String?
+
+  @@index([email, createdAt])
+  @@index([ip, createdAt])
+}
+
+model Avatar {
+  id        String   @id @default(cuid())
+  userId    String
+  style     String
+  seed      String
+  config    Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId])
+}
+
+model Event {
+  id          String   @id @default(cuid())
+  hostId      String
+  title       String
+  description String   @default("")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  host  User   @relation("EventHost", fields: [hostId], references: [id], onDelete: Restrict)
+  rooms Room[]
+
+  @@index([hostId])
+}
+
+model Room {
+  id            String     @id @default(cuid())
+  eventId       String
+  name          String
+  code          String     @unique
+  status        RoomStatus @default(DRAFT)
+  teamSize      Int        @default(2)
+  joinsEnabled  Boolean    @default(true)
+  shopEnabled   Boolean    @default(false)
+  challengesOn  Boolean    @default(true)
+  currentActivityId String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  event             Event              @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  currentActivity   Activity?          @relation("RoomCurrentActivity", fields: [currentActivityId], references: [id], onDelete: SetNull)
+  teams             Team[]
+  activities        Activity[]         @relation("RoomActivities")
+  powerShopOffers   PowerShopOffer[]
+  challenges        Challenge[]
+  auditEvents       AuditEvent[]
+  scores            ScoreTransaction[]
+  leaderboardCache  LeaderboardEntry[]
+  media             UploadedMedia[]
+  healthSnapshots   HealthSnapshot[]
+
+  @@index([eventId])
+  @@index([status])
+}
+
+model Team {
+  id        String   @id @default(cuid())
+  roomId    String
+  name      String
+  avatarSeed String  @default("alpha")
+  createdAt DateTime @default(now())
+
+  room        Room         @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  members     TeamMember[]
+  cards       TeamPowerCard[]
+  challengesA Challenge[]  @relation("ChallengeA")
+  challengesB Challenge[]  @relation("ChallengeB")
+  freezeUntil DateTime?
+  shieldUntil DateTime?
+  doubleUntil DateTime?
+
+  @@unique([roomId, name])
+  @@index([roomId])
+}
+
+model TeamMember {
+  id       String   @id @default(cuid())
+  teamId   String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([userId])
+}
+
+model Activity {
+  id          String         @id @default(cuid())
+  roomId      String
+  type        ActivityType
+  title       String
+  status      ActivityStatus @default(DRAFT)
+  sortOrder   Int
+  durationMs  Int            @default(60000)
+  startedAt   DateTime?
+  pausedAt    DateTime?
+  endsAt      DateTime?
+  extraMs     Int            @default(0)
+  publishedAt DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  room             Room              @relation("RoomActivities", fields: [roomId], references: [id], onDelete: Cascade)
+  currentForRooms  Room[]            @relation("RoomCurrentActivity")
+  quiz             Quiz?
+  codingProblem    CodingProblem?
+  quizSubmissions  QuizSubmission[]
+  codingSubs       CodingSubmission[]
+
+  @@index([roomId, sortOrder])
+}
+
+model Quiz {
+  id         String @id @default(cuid())
+  activityId String @unique
+  activity   Activity @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  questions  QuizQuestion[]
+}
+
+model QuizQuestion {
+  id           String  @id @default(cuid())
+  quizId       String
+  prompt       String
+  explanation  String  @default("")
+  points       Int     @default(100)
+  timeLimitMs  Int     @default(20000)
+  sortOrder    Int
+  imageId      String?
+  current      Boolean @default(false)
+
+  quiz    Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  options QuizOption[]
+  image   UploadedMedia? @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  submissions QuizSubmission[]
+
+  @@index([quizId, sortOrder])
+}
+
+model QuizOption {
+  id         String  @id @default(cuid())
+  questionId String
+  label      String
+  sortOrder  Int
+  isCorrect  Boolean @default(false)
+
+  question    QuizQuestion     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  submissions QuizSubmission[]
+
+  @@index([questionId])
+}
+
+model QuizSubmission {
+  id          String   @id @default(cuid())
+  activityId  String
+  questionId  String
+  userId      String
+  optionId    String
+  correct     Boolean
+  pointsAwarded Int    @default(0)
+  idempotencyKey String
+  createdAt   DateTime @default(now())
+
+  activity Activity    @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  question QuizQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  user     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  option   QuizOption  @relation(fields: [optionId], references: [id], onDelete: Restrict)
+
+  @@unique([questionId, userId])
+  @@unique([idempotencyKey])
+  @@index([activityId])
+}
+
+model CodingProblem {
+  id              String @id @default(cuid())
+  activityId      String @unique
+  description     String
+  constraints     String @default("")
+  inputFormat     String @default("")
+  outputFormat    String @default("")
+  examples        Json
+  difficulty      String @default("medium")
+  allowedLanguages Json
+  starterCode     Json
+  cpuTimeLimit    Float  @default(2)
+  memoryLimitKb   Int    @default(128000)
+  imageId         String?
+
+  activity  Activity         @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  tests     CodingTestCase[]
+  image     UploadedMedia?   @relation(fields: [imageId], references: [id], onDelete: SetNull)
+}
+
+model CodingTestCase {
+  id        String  @id @default(cuid())
+  problemId String
+  input     String
+  expected  String
+  points    Int
+  hidden    Boolean @default(true)
+  sortOrder Int
+
+  problem CodingProblem     @relation(fields: [problemId], references: [id], onDelete: Cascade)
+  results TestCaseResult[]
+
+  @@index([problemId])
+}
+
+model CodingSubmission {
+  id             String           @id @default(cuid())
+  activityId     String
+  userId         String
+  languageId     Int
+  source         String
+  status         SubmissionStatus @default(QUEUED)
+  pointsAwarded  Int              @default(0)
+  compileOutput  String           @default("")
+  idempotencyKey String           @unique
+  createdAt      DateTime         @default(now())
+  judgedAt       DateTime?
+
+  activity Activity         @relation(fields: [activityId], references: [id], onDelete: Cascade)
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  results  TestCaseResult[]
+
+  @@index([activityId, userId, createdAt])
+}
+
+model TestCaseResult {
+  id           String @id @default(cuid())
+  submissionId String
+  testCaseId   String
+  passed       Boolean
+  points       Int    @default(0)
+  stdout       String @default("")
+  stderr       String @default("")
+  timeMs       Int    @default(0)
+
+  submission CodingSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  testCase   CodingTestCase   @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+
+  @@unique([submissionId, testCaseId])
+}
+
+model ScoreTransaction {
+  id          String      @id @default(cuid())
+  roomId      String
+  teamId      String
+  delta       Int
+  reason      ScoreReason
+  refType     String
+  refId       String
+  actorUserId String?
+  createdAt   DateTime    @default(now())
+  idempotencyKey String   @unique
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, teamId, createdAt])
+  @@index([refType, refId])
+}
+
+model LeaderboardEntry {
+  roomId    String
+  teamId    String
+  score     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@id([roomId, teamId])
+  @@index([roomId, score])
+}
+
+model PowerCardCatalog {
+  id          String        @id @default(cuid())
+  type        PowerCardType @unique
+  name        String
+  description String
+  defaultCost Int
+  durationMs  Int           @default(0)
+}
+
+model PowerShopOffer {
+  id          String        @id @default(cuid())
+  roomId      String
+  cardType    PowerCardType
+  cost        Int
+  inventory   Int
+  active      Boolean       @default(false)
+  openedAt    DateTime?
+  closedAt    DateTime?
+
+  room        Room                 @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  purchases   PowerCardPurchase[]
+
+  @@index([roomId, active])
+}
+
+model PowerCardPurchase {
+  id          String   @id @default(cuid())
+  offerId     String
+  teamId      String
+  userId      String
+  createdAt   DateTime @default(now())
+  idempotencyKey String @unique
+
+  offer PowerShopOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+
+  @@unique([offerId, teamId])
+}
+
+model TeamPowerCard {
+  id        String        @id @default(cuid())
+  teamId    String
+  cardType  PowerCardType
+  quantity  Int           @default(0)
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, cardType])
+}
+
+model PowerCardUse {
+  id          String        @id @default(cuid())
+  teamId      String
+  targetTeamId String?
+  cardType    PowerCardType
+  userId      String
+  createdAt   DateTime      @default(now())
+  idempotencyKey String     @unique
+}
+
+model Challenge {
+  id          String          @id @default(cuid())
+  roomId      String
+  challengerId String
+  opponentId  String
+  status      ChallengeStatus @default(PENDING)
+  activityHint String?
+  winnerId    String?
+  createdAt   DateTime        @default(now())
+  resolvedAt  DateTime?
+  idempotencyKey String       @unique
+
+  room       Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  challenger Team @relation("ChallengeA", fields: [challengerId], references: [id], onDelete: Cascade)
+  opponent   Team @relation("ChallengeB", fields: [opponentId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, status])
+}
+
+model UploadedMedia {
+  id           String   @id @default(cuid())
+  roomId       String?
+  uploaderId   String
+  storageKey   String   @unique
+  mime         String
+  bytes        Int
+  createdAt    DateTime @default(now())
+
+  room Room? @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  quizQuestions QuizQuestion[]
+  codingProblems CodingProblem[]
+}
+
+model ProctoringSession {
+  id           String   @id @default(cuid())
+  roomId       String
+  userId       String
+  teamId       String
+  livekitRoom  String
+  sharing      Boolean  @default(false)
+  connected    Boolean  @default(false)
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+
+  user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events ProctoringEvent[]
+
+  @@unique([roomId, userId])
+  @@index([roomId])
+}
+
+model ProctoringEvent {
+  id        String        @id @default(cuid())
+  sessionId String
+  signal    ProctorSignal
+  createdAt DateTime      @default(now())
+  meta      Json?
+
+  session ProctoringSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt])
+}
+
+model AuditEvent {
+  id        String   @id @default(cuid())
+  roomId    String?
+  actorId   String?
+  action    String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  room  Room? @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([roomId, createdAt])
+  @@index([action, createdAt])
+}
+
+model IdempotencyKey {
+  id        String   @id
+  userId    String
+  route     String
+  status    Int
+  bodyHash  String
+  response  Json
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, route, id])
+  @@index([expiresAt])
+}
+
+model HealthSnapshot {
+  id          String          @id @default(cuid())
+  roomId      String?
+  component   HealthComponent
+  state       HealthState
+  detail      String          @default("")
+  createdAt   DateTime        @default(now())
+
+  room Room? @relation(fields: [roomId], references: [id], onDelete: SetNull)
+
+  @@index([component, createdAt])
+}

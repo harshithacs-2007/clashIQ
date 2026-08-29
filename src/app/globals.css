@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+:root {
+  --ink: #0c0e11;
+  --panel: #14181e;
+  --panel-2: #1b2129;
+  --line: #2c3540;
+  --mute: #8b97a5;
+  --text: #e8edf2;
+  --lime: #c8f542;
+  --lime-dim: #8fb52a;
+  --signal: #4aa3ff;
+  --danger: #ff5c5c;
+  --warn: #ffb020;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--ink);
+  color: var(--text);
+  font-family: var(--font-sans), "IBM Plex Sans", system-ui, sans-serif;
+}
+
+body {
+  background-image:
+    linear-gradient(180deg, rgba(255,255,255,0.02), transparent 280px),
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 47px,
+      rgba(255,255,255,0.015) 48px
+    );
+}
+
+a { color: inherit; text-decoration: none; }
+
+button, input, textarea, select {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
+}
+
+.mono { font-family: var(--font-mono), "IBM Plex Mono", ui-monospace, monospace; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.lime { color: var(--lime); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
