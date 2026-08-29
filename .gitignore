@@ -15,7 +15,7 @@ credentials.json
 .DS_Store
 playwright-report
 test-results
-uploads
+/uploads
 .vercel
 prisma/*.db
 prisma/*.db-journal
