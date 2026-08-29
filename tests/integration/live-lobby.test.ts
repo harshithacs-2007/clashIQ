@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 const base = process.env.LIVE_APP_URL?.replace(/\/$/, "");
-const hostEmail = process.env.SEED_HOST_EMAIL;
+const hostEmail = (() => {
+  const email = process.env.SEED_HOST_EMAIL?.trim().toLowerCase() ?? "";
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "host@clashiq.local";
+})();
 const hostPassword = process.env.SEED_HOST_PASSWORD;
 
 type Jar = { csrf: string; cookie: string };
@@ -53,10 +56,11 @@ async function post<T>(jar: Jar, path: string, body: unknown, expectStatus?: num
 describe.skipIf(!base || !hostEmail || !hostPassword)("live host → join → lobby", () => {
   it("creates an open room, lets a participant join a team, and shows them in host lobby", async () => {
     let jar = await boot();
-    const login = await post<{ user: { role: string } }>(jar, "/api/auth/login", {
+    const login = await post<{ user: { role: string }; error?: string }>(jar, "/api/auth/login", {
       email: hostEmail,
       password: hostPassword,
     });
+    expect(login.data.error ?? "ok", `host login failed: ${login.data.error ?? login.status}`).toBe("ok");
     expect(login.status).toBe(200);
     expect(login.data.user.role).toBe("HOST");
     jar = login.jar;

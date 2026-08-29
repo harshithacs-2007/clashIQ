@@ -25,8 +25,14 @@ function loadEnvFile(file: string) {
 loadEnvFile(path.resolve(process.cwd(), ".env.vercel.production"));
 loadEnvFile(path.resolve(process.cwd(), ".env.local"));
 
+function validLoginEmail(raw: string | undefined): string {
+  const email = raw?.trim().toLowerCase() ?? "";
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return email;
+  return "host@clashiq.local";
+}
+
 async function main() {
-  const email = process.env.SEED_HOST_EMAIL?.trim().toLowerCase();
+  const email = validLoginEmail(process.env.SEED_HOST_EMAIL);
   const password = process.env.SEED_HOST_PASSWORD;
   if (!email || !password || password.length < 10) {
     throw new Error("SEED_HOST_EMAIL and SEED_HOST_PASSWORD (>=10 chars) are required.");

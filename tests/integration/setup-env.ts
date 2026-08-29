@@ -21,7 +21,7 @@ function loadEnvFile(file: string, overwrite = false) {
 }
 
 loadEnvFile(path.resolve(process.cwd(), ".env.local"));
-loadEnvFile(path.resolve(process.cwd(), ".env.vercel.production"));
+loadEnvFile(path.resolve(process.cwd(), ".env.vercel.production"), true);
 if (!process.env.LIVE_APP_URL) {
   process.env.LIVE_APP_URL = "https://clash-iq-zeta.vercel.app";
 }
