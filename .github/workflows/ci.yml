@@ -29,6 +29,7 @@ jobs:
       APP_URL: http://localhost:3000
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       DATABASE_URL: postgresql://clashiq:clashiq@localhost:5432/clashiq?schema=public
+      DIRECT_URL: postgresql://clashiq:clashiq@localhost:5432/clashiq?schema=public
       REDIS_URL: redis://localhost:6379
       SESSION_SECRET: ci-session-secret-value-32bytes-min
       REALTIME_SHARED_SECRET: ci-realtime-secret-16
@@ -39,7 +40,7 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - run: npx prisma migrate deploy || npx prisma db push --accept-data-loss
+      - run: npx prisma migrate deploy
       - run: npm run typecheck
       - run: npm test
       - run: npm run lint
