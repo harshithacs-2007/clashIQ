@@ -99,9 +99,14 @@ export default function PlayPage() {
     if (!current || codeBusy || remaining <= 0) return;
     setCodeBusy(true);
     setFeedback(runOnly ? "Running against public tests…" : "Submission received. Judging…");
+    // Generated once per click and reused on any automatic retry (e.g. the
+    // api() client's CSRF-refresh retry) so a network blip or double-fire
+    // can never create two judged submissions for one attempt.
+    const attemptKey = crypto.randomUUID();
     try {
       const res = await api<{ submissionId: string; runOnly?: boolean }>("/api/coding/submit", {
         method: "POST",
+        headers: { "Idempotency-Key": attemptKey },
         body: JSON.stringify({ activityId: current.id, languageId: lang, source, runOnly }),
       });
       const poll = async () => {
