@@ -47,6 +47,7 @@ export default function PlayPage() {
   const [lang, setLang] = useState(71);
   const [shopMsg, setShopMsg] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [codeBusy, setCodeBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -81,38 +82,68 @@ export default function PlayPage() {
   async function submitQuiz(optionId: string) {
     if (!current || !state?.question) return;
     setPicked(optionId);
-    const res = await api<{ correct: boolean; pointsAwarded: number; duplicate?: boolean }>("/api/quiz/submit", {
-      method: "POST",
-      body: JSON.stringify({ activityId: current.id, questionId: state.question.id, optionId }),
-    });
-    setFeedback(res.duplicate ? "Already submitted." : res.correct ? `Correct · +${res.pointsAwarded}` : "Locked in.");
+    try {
+      const res = await api<{ correct: boolean; pointsAwarded: number; duplicate?: boolean }>("/api/quiz/submit", {
+        method: "POST",
+        body: JSON.stringify({ activityId: current.id, questionId: state.question.id, optionId }),
+      });
+      setFeedback(res.duplicate ? "Already submitted." : res.correct ? `Correct · +${res.pointsAwarded}` : "Locked in.");
+      void refresh();
+    } catch (err) {
+      setPicked(null);
+      setFeedback(err instanceof Error ? err.message : "Could not submit answer.");
+    }
   }
 
-  async function submitCode() {
-    if (!current) return;
-    setFeedback("Submission received. Judging…");
-    const res = await api<{ submissionId: string }>("/api/coding/submit", {
-      method: "POST",
-      body: JSON.stringify({ activityId: current.id, languageId: lang, source }),
-    });
-    const poll = async () => {
-      const s = await api<{ status: string; pointsAwarded: number }>(`/api/coding/submit?id=${res.submissionId}`);
-      if (s.status === "QUEUED" || s.status === "RUNNING") {
-        setTimeout(poll, 1200);
-        return;
-      }
-      setFeedback(`${s.status.replaceAll("_", " ")} · ${s.pointsAwarded} pts`);
-      void refresh();
-    };
-    setTimeout(poll, 800);
+  async function executeCode(runOnly: boolean) {
+    if (!current || codeBusy || remaining <= 0) return;
+    setCodeBusy(true);
+    setFeedback(runOnly ? "Running against public tests…" : "Submission received. Judging…");
+    try {
+      const res = await api<{ submissionId: string; runOnly?: boolean }>("/api/coding/submit", {
+        method: "POST",
+        body: JSON.stringify({ activityId: current.id, languageId: lang, source, runOnly }),
+      });
+      const poll = async () => {
+        try {
+          const s = await api<{ status: string; pointsAwarded: number; results?: { passed: boolean; hidden: boolean; timeMs: number; stdout?: string }[] }>(`/api/coding/submit?id=${res.submissionId}`);
+          if (s.status === "QUEUED" || s.status === "RUNNING") {
+            setTimeout(poll, 900);
+            return;
+          }
+          if (runOnly) {
+            const visible = (s.results ?? []).filter((r) => !r.hidden);
+            const passed = visible.filter((r) => r.passed).length;
+            const total = visible.length;
+            setFeedback(total ? `Run complete · ${passed}/${total} public tests passed` : `Run complete · ${s.status.replaceAll("_", " ")}`);
+          } else {
+            setFeedback(`${s.status.replaceAll("_", " ")} · ${s.pointsAwarded} pts`);
+            void refresh();
+          }
+        } catch (err) {
+          setFeedback(err instanceof Error ? err.message : "Could not retrieve judge result.");
+        } finally {
+          setCodeBusy(false);
+        }
+      };
+      setTimeout(poll, 700);
+    } catch (err) {
+      setCodeBusy(false);
+      setFeedback(err instanceof Error ? err.message : "Could not submit code.");
+    }
   }
 
   async function buy(offerId: string) {
-    const res = await api<{ ok: boolean; message?: string }>("/api/power/shop", {
-      method: "POST",
-      body: JSON.stringify({ offerId, roomId }),
-    });
-    setShopMsg(res.ok ? "Card acquired." : res.message ?? "Good try! Cards aren't available this time. Try again next time!");
+    try {
+      const res = await api<{ ok: boolean; message?: string }>("/api/power/shop", {
+        method: "POST",
+        body: JSON.stringify({ offerId, roomId }),
+      });
+      setShopMsg(res.ok ? "Card acquired." : res.message ?? "Good try! Cards aren't available this time. Try again next time!");
+      void refresh();
+    } catch (err) {
+      setShopMsg(err instanceof Error ? err.message : "Could not buy this card.");
+    }
   }
 
   async function shareScreen() {
@@ -207,14 +238,15 @@ export default function PlayPage() {
             <article className="prose prose-invert max-w-none text-sm text-[var(--mute)] whitespace-pre-wrap">
               {state.coding.description}
             </article>
-            <div className="mt-3 flex gap-2">
-              <select value={lang} onChange={(e) => setLang(Number(e.target.value))} className="bg-[var(--panel)] px-2 py-1">
+            <div className="mt-3 flex flex-wrap gap-2">
+              <select value={lang} onChange={(e) => setLang(Number(e.target.value))} className="bg-[var(--panel)] px-2 py-1" disabled={codeBusy}>
                 {state.coding.allowedLanguages.map((id) => (
                   <option key={id} value={id}>{LANGS[id] ?? id}</option>
                 ))}
               </select>
-              <button onClick={() => void shareScreen()} className="border border-[var(--line)] px-3 py-1 text-sm">Share screen</button>
-              <button onClick={() => void submitCode()} className="bg-[var(--lime)] px-3 py-1 font-semibold text-black">Submit</button>
+              <button disabled={codeBusy || remaining <= 0} onClick={() => void executeCode(true)} className="border border-[var(--line)] px-3 py-1 text-sm disabled:opacity-50">{codeBusy ? "Running…" : "Run"}</button>
+              <button disabled={codeBusy || remaining <= 0} onClick={() => void shareScreen()} className="border border-[var(--line)] px-3 py-1 text-sm disabled:opacity-50">Share screen</button>
+              <button disabled={codeBusy || remaining <= 0} onClick={() => void executeCode(false)} className="bg-[var(--lime)] px-3 py-1 font-semibold text-black disabled:opacity-50">Submit</button>
             </div>
             <div className="mt-3 h-[420px] overflow-hidden border border-[var(--line)]">
               <Monaco
@@ -274,7 +306,7 @@ export default function PlayPage() {
                       <div className="font-semibold">{o.cardType.replaceAll("_", " ")}</div>
                       <div className="mono text-xs text-[var(--mute)]">{o.cost} points · {o.inventory} left</div>
                     </div>
-                    <button onClick={() => void buy(o.id)} className="bg-[var(--lime)] px-4 py-2 font-semibold text-black">BUY</button>
+                    <button disabled={codeBusy} onClick={() => void buy(o.id)} className="bg-[var(--lime)] px-4 py-2 font-semibold text-black disabled:opacity-50">BUY</button>
                   </div>
                 ))}
               </div>
@@ -299,7 +331,7 @@ function ChallengeBox({
           <button
             key={t.id}
             className="w-full px-2 py-1 text-left text-sm hover:bg-[var(--panel-2)]"
-            onClick={() => void api("/api/challenges", { method: "POST", body: JSON.stringify({ roomId, opponentId: t.id }) })}
+            onClick={() => void api("/api/challenges", { method: "POST", body: JSON.stringify({ roomId, opponentId: t.id }) }).then(() => setTimeout(() => window.location.reload(), 500)).catch(() => undefined)}
           >
             Challenge {t.name}
           </button>
