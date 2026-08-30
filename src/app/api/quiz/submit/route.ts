@@ -1,107 +1,105 @@
+import { randomUUID } from "crypto";
 import { z } from "zod";
-import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { jsonError, jsonOk, HttpError } from "@/lib/http";
 import { guardMutating, parseJson, requireUser, idempotencyKey } from "@/lib/request";
 import { requireMembership } from "@/lib/access";
-import { applyScore } from "@/lib/scoring";
+import { enqueueJudge } from "@/lib/judge-queue";
 import { remainingMs } from "@/lib/timer";
 
 const schema = z.object({
   activityId: z.string(),
-  questionId: z.string(),
-  optionId: z.string(),
-}).strict();
+  languageId: z.number().int(),
+  source: z.string().min(1).max(200_000),
+  runOnly: z.boolean().default(false),
+});
 
 export async function POST(req: Request) {
   try {
     const user = await requireUser(req);
-    await guardMutating(req, `quiz-sub:${user.id}`, 40, 60);
+    await guardMutating(req, `code-sub:${user.id}`, 20, 60);
     const body = schema.parse(await parseJson(req));
-    const key = idempotencyKey(req, `quiz:${user.id}:${body.questionId}`);
-
     const activity = await prisma.activity.findUnique({
       where: { id: body.activityId },
-      include: { quiz: true },
+      include: { codingProblem: true },
     });
-    if (!activity || activity.type !== "QUIZ" || !activity.quiz) throw new HttpError(404, "Quiz not found.");
-    if (activity.status === "LOCKED" || activity.status === "ENDED" || activity.status === "PAUSED") {
-      throw new HttpError(403, "This quiz is locked.");
-    }
-    if (activity.status !== "ACTIVE") throw new HttpError(403, "Quiz is not live.");
+    if (!activity?.codingProblem) throw new HttpError(404, "Coding round not found.");
+    if (activity.status !== "ACTIVE") throw new HttpError(403, "Coding round is not accepting submissions.");
     if (remainingMs(activity) <= 0) throw new HttpError(403, "Time is up.");
+    await requireMembership(user.id, activity.roomId);
 
-    const member = await requireMembership(user.id, activity.roomId);
-    const question = await prisma.quizQuestion.findUnique({
-      where: { id: body.questionId },
-      include: { options: true },
-    });
-    if (!question || question.quizId !== activity.quiz.id) throw new HttpError(404, "Question not found.");
-    if (!question.current) throw new HttpError(403, "This question is not active.");
-    const option = question.options.find((o) => o.id === body.optionId);
-    if (!option) throw new HttpError(400, "Invalid option.");
+    const langs = activity.codingProblem.allowedLanguages as number[];
+    if (!langs.includes(body.languageId)) throw new HttpError(400, "Language not allowed.");
 
-    try {
-      const result = await prisma.$transaction(async (tx) => {
-        const teamExisting = await tx.quizSubmission.findUnique({
-          where: { questionId_teamId: { questionId: question.id, teamId: member.teamId } },
-        });
-        if (teamExisting) {
-          return {
-            duplicate: true,
-            correct: teamExisting.correct,
-            pointsAwarded: teamExisting.userId === user.id ? teamExisting.pointsAwarded : 0,
-          };
-        }
+    // Fallback only fires for a caller that omits the Idempotency-Key header
+    // (there is no such caller in this app's own frontend anymore). It must
+    // not depend on Date.now(): a millisecond timestamp does not survive a
+    // client retry and would silently defeat deduplication.
+    const key = idempotencyKey(req, `code:${user.id}:${activity.id}:${randomUUID()}`);
 
-        const correct = option.isCorrect;
-        const points = correct ? question.points : 0;
-        const submission = await tx.quizSubmission.create({
-          data: {
-            activityId: activity.id,
-            questionId: question.id,
-            userId: user.id,
-            teamId: member.teamId,
-            optionId: option.id,
-            correct,
-            pointsAwarded: points,
-            idempotencyKey: key,
-          },
-        });
-        return { duplicate: false, correct, pointsAwarded: points, submissionId: submission.id };
-      });
-
-      if (!result.duplicate && result.pointsAwarded > 0 && "submissionId" in result && result.submissionId) {
-        await applyScore({
-          roomId: activity.roomId,
-          teamId: member.teamId,
-          delta: result.pointsAwarded,
-          reason: "QUIZ_RESULT",
-          refType: "quiz_submission",
-          refId: result.submissionId,
-          actorUserId: user.id,
-          idempotencyKey: `score:quiz:${question.id}:${member.teamId}`,
-        });
-      }
-
-      return jsonOk({
-        duplicate: result.duplicate,
-        correct: result.correct,
-        pointsAwarded: result.pointsAwarded,
-      });
-    } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
-        const existing = await prisma.quizSubmission.findUnique({
-          where: { questionId_teamId: { questionId: question.id, teamId: member.teamId } },
-        });
-        return jsonOk({
-          duplicate: true,
-          correct: existing?.correct ?? false,
-          pointsAwarded: existing?.userId === user.id ? existing.pointsAwarded : 0,
-        });
-      }
-      throw e;
+    // Check-then-create so a genuine retry (same key, e.g. from the api()
+    // client's CSRF-refresh retry) returns the original submission instead
+    // of hitting the DB's unique constraint on idempotencyKey and 500'ing.
+    const existing = await prisma.codingSubmission.findUnique({ where: { idempotencyKey: key } });
+    if (existing) {
+      return jsonOk({ submissionId: existing.id, status: existing.status, runOnly: body.runOnly }, 202);
     }
+
+    let submission;
+    try {
+      submission = await prisma.codingSubmission.create({
+        data: {
+          activityId: activity.id,
+          userId: user.id,
+          languageId: body.languageId,
+          source: body.source,
+          status: "QUEUED",
+          idempotencyKey: key,
+        },
+      });
+    } catch (createErr) {
+      // Two truly simultaneous retries can both pass the findUnique check
+      // above before either commits. The unique constraint on
+      // idempotencyKey is the real guarantee; if it fires, the other
+      // request won the race — fetch and return its submission instead of
+      // creating a duplicate.
+      const isUniqueViolation =
+        typeof createErr === "object" && createErr !== null && (createErr as { code?: string }).code === "P2002";
+      if (!isUniqueViolation) throw createErr;
+      const winner = await prisma.codingSubmission.findUnique({ where: { idempotencyKey: key } });
+      if (!winner) throw createErr;
+      return jsonOk({ submissionId: winner.id, status: winner.status, runOnly: body.runOnly }, 202);
+    }
+    await enqueueJudge(submission.id, { runOnly: body.runOnly });
+    return jsonOk({ submissionId: submission.id, status: "QUEUED", runOnly: body.runOnly }, 202);
+  } catch (e) {
+    return jsonError(e);
+  }
+}
+
+export async function GET(req: Request) {
+  try {
+    const user = await requireUser(req);
+    const id = new URL(req.url).searchParams.get("id");
+    if (!id) throw new HttpError(400, "id is required.");
+    const sub = await prisma.codingSubmission.findUnique({
+      where: { id },
+      include: { results: { include: { testCase: true } } },
+    });
+    if (!sub || sub.userId !== user.id) throw new HttpError(404, "Submission not found.");
+    return jsonOk({
+      id: sub.id,
+      status: sub.status,
+      pointsAwarded: sub.pointsAwarded,
+      compileOutput: sub.compileOutput,
+      results: sub.results.map((r) => ({
+        passed: r.passed,
+        points: r.points,
+        hidden: r.testCase.hidden,
+        timeMs: r.timeMs,
+        stdout: r.testCase.hidden ? undefined : r.stdout,
+      })),
+    });
   } catch (e) {
     return jsonError(e);
   }
